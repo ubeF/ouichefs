@@ -197,6 +197,70 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 	return written;
 }
 
+ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count, loff_t *pos) {
+	struct inode *inode = file->f_inode;
+	struct super_block *sb = inode->i_sb;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+
+	sector_t iblock = *pos / 4096;
+	int block_offset = *pos % 4096;
+
+	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+	if (!bh_index)
+		return -EIO;
+	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+	int written = 0;
+	while (written <= count) {
+		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
+			break;
+		__le32 pblock = index->blocks[iblock];
+		if (pblock == 0) {
+			pblock = get_free_block(sbi);
+			if (!pblock) {
+				return -ENOSPC;
+			}
+
+			index->blocks[iblock] = cpu_to_le32(pblock);
+			++inode->i_blocks;
+
+			mark_inode_dirty(inode);
+		}
+
+
+		struct buffer_head *bh = sb_bread(sb, pblock);
+		if (!bh) {
+			return -EIO;
+		}
+
+		int block_space = 4095 - block_offset;
+		int to_write = count - written;
+		if (block_space < to_write)
+			to_write = block_space;
+		
+		if (copy_from_user(bh->b_data + block_offset, buf, to_write)) {
+			brelse(bh);
+			return -EFAULT;
+		}
+
+		printk("data printed\n");
+
+		written += to_write;
+		*pos += to_write;
+		block_offset = 0;
+		iblock++;
+
+		mark_buffer_dirty(bh);
+		sync_dirty_buffer(bh);
+		brelse(bh);
+	}
+
+	inode->i_mtime = inode_set_ctime_current(inode);
+	return written;
+}
+
+
 const struct address_space_operations ouichefs_aops = {
 	.readahead = ouichefs_readahead,
 	.writepage = ouichefs_writepage,
