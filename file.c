@@ -148,6 +148,55 @@ static int ouichefs_write_end(struct file *file, struct address_space *mapping,
 	return ret;
 }
 
+ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+{
+	struct inode *inode = file->f_inode;
+	struct super_block *sb = inode->i_sb;
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+
+	sector_t iblock = *pos / 4096;
+	int block_offset = *pos % 4096;
+
+	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+	if (!bh_index)
+		return -EIO;
+	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+	int written = 0;
+	while (written <= count) {
+		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
+			return written;
+		__le32 pblock = index->blocks[iblock];
+		if (pblock == 0) {
+			return written;
+		}
+
+		struct buffer_head *bh = sb_bread(sb, pblock);
+		if (!bh) {
+			return -EIO;
+		}
+
+		int block_space = 4095 - block_offset;
+		int to_read = count - written;
+		if (block_space < to_read)
+			to_read = block_space;
+		
+		if (copy_to_user(buf, bh->b_data + block_offset, to_read)) {
+			brelse(bh);
+			return -EFAULT;
+		}
+
+		written += to_read;
+		*pos += to_read;
+		block_offset = 0;
+		iblock++;
+
+		brelse(bh);
+	}
+
+	return written;
+}
+
 const struct address_space_operations ouichefs_aops = {
 	.readahead = ouichefs_readahead,
 	.writepage = ouichefs_writepage,
@@ -157,6 +206,7 @@ const struct address_space_operations ouichefs_aops = {
 
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
+	.read = ouichefs_read,
 	.llseek = generic_file_llseek,
 	.read_iter = generic_file_read_iter,
 	.write_iter = generic_file_write_iter,
