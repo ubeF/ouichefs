@@ -5,6 +5,7 @@
  * Copyright (C) 2018 Redha Gouicem <redha.gouicem@lip6.fr>
  */
 
+#include "asm-generic/fcntl.h"
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
 
 #include <linux/module.h>
@@ -205,6 +206,10 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
+	if (file->f_flags & O_APPEND)
+
+		*pos = inode->i_size;
+
 	sector_t iblock = *pos / 4096;
 	int block_offset = *pos % 4096;
 
@@ -214,7 +219,7 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
 	int written = 0;
-	while (written <= count) {
+	while (written < count) {
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
 			break;
 		__le32 pblock = index->blocks[iblock];
@@ -228,6 +233,8 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 			++inode->i_blocks;
 
 			mark_inode_dirty(inode);
+			mark_buffer_dirty(bh_index);
+			sync_dirty_buffer(bh_index);
 		}
 
 
@@ -236,7 +243,7 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 			return -EIO;
 		}
 
-		int block_space = 4095 - block_offset;
+		int block_space = 4096 - block_offset;
 		int to_write = count - written;
 		if (block_space < to_write)
 			to_write = block_space;
@@ -245,13 +252,15 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 			brelse(bh);
 			return -EFAULT;
 		}
-
-		printk("data printed\n");
+		buf += to_write;
 
 		written += to_write;
 		*pos += to_write;
 		block_offset = 0;
 		iblock++;
+
+		inode->i_size += to_write;
+		mark_inode_dirty(inode);
 
 		mark_buffer_dirty(bh);
 		sync_dirty_buffer(bh);
@@ -259,6 +268,8 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	}
 
 	inode->i_mtime = inode_set_ctime_current(inode);
+	mark_inode_dirty(inode);
+	brelse(bh_index);
 	return written;
 }
 
@@ -273,6 +284,7 @@ const struct address_space_operations ouichefs_aops = {
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
 	.read = ouichefs_read,
+	.write = ouichefs_write,
 	.llseek = generic_file_llseek,
 	.read_iter = generic_file_read_iter,
 	.write_iter = generic_file_write_iter,
@@ -294,6 +306,7 @@ int ouichefs_truncate(struct inode *inode)
 		goto out;
 	}
 
+	truncate_pagecache(inode, inode->i_size);
 	ret = block_truncate_page(inode->i_mapping, inode->i_size, ouichefs_file_get_block);
 	if (ret < 0)
 		goto out_brelse;
