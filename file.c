@@ -153,8 +153,8 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 	struct inode *inode = file->f_inode;
 	struct super_block *sb = inode->i_sb;
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
-
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+
 	if (!bh_index)
 		return -EIO;
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
@@ -162,12 +162,13 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 	char *cursor = buf;
 	char *buf_end = buf + count;
 
-	for(int to_read; cursor < buf_end && *pos < inode->i_size; *pos += to_read, cursor += to_read) {
+	for (int to_read; cursor < buf_end && *pos < inode->i_size; *pos += to_read, cursor += to_read) {
 		sector_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
 		int file_space = inode->i_size - *pos;
 		int buf_space = buf_end - buf;
+
 		to_read = min(buf_space, min(block_space, file_space));
 
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
@@ -194,13 +195,14 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 	return cursor - buf;
 }
 
-ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count, loff_t *pos) {
+ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count, loff_t *pos)
+{
 	struct inode *inode = file->f_inode;
 	struct super_block *sb = inode->i_sb;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	ouichefs_truncate(inode); // removes blocks after end of file; filesize was already correctly set before write is called  
+	ouichefs_truncate(inode); // removes blocks after end of file; filesize was already correctly set before write is called
 
 	if (file->f_flags & O_APPEND)
 		*pos = inode->i_size;
@@ -213,7 +215,7 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	const char *cursor = buf;
 	const char *buf_end = buf + count;
 
-	for(int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
+	for (int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
 		sector_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
