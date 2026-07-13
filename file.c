@@ -5,7 +5,6 @@
  * Copyright (C) 2018 Redha Gouicem <redha.gouicem@lip6.fr>
  */
 
-#include "asm-generic/fcntl.h"
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
 
 #include <linux/module.h>
@@ -162,9 +161,9 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 
 	int read = 0;
 	while (read < count && *pos < inode->i_size) {
-		sector_t iblock = *pos / 4096;
-		int block_offset = *pos % 4096;
-		int block_space = 4096 - block_offset;
+		sector_t iblock = *pos / sb->s_blocksize;
+		int block_offset = *pos % sb->s_blocksize;
+		int block_space = sb->s_blocksize - block_offset;
 		int file_space = inode->i_size - *pos;
 		int to_read = count - read;
 		if (block_space < to_read)
@@ -206,12 +205,10 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
+	ouichefs_truncate(inode); // removes blocks after end of file; filesize was already correctly set before write is called  
+
 	if (file->f_flags & O_APPEND)
-
 		*pos = inode->i_size;
-
-	sector_t iblock = *pos / 4096;
-	int block_offset = *pos % 4096;
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index)
@@ -220,9 +217,17 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 
 	int written = 0;
 	while (written < count) {
+		int to_write = count - written;
+		sector_t iblock = *pos / sb->s_blocksize;
+		int block_offset = *pos % sb->s_blocksize;
+		int block_space = sb->s_blocksize - block_offset;
+		if (block_space < to_write)
+			to_write = block_space;
+
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
 			break;
 		__le32 pblock = index->blocks[iblock];
+		struct buffer_head *bh;
 		if (pblock == 0) {
 			pblock = get_free_block(sbi);
 			if (!pblock) {
@@ -235,32 +240,25 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 			mark_inode_dirty(inode);
 			mark_buffer_dirty(bh_index);
 			sync_dirty_buffer(bh_index);
+
+			bh = sb_getblk(sb, pblock);
+			if (!bh)
+				return -EIO;
+			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
+		} else {
+			bh = sb_bread(sb, pblock);
+			if (!bh)
+				return -EIO;
 		}
 
-
-		struct buffer_head *bh = sb_bread(sb, pblock);
-		if (!bh) {
-			return -EIO;
-		}
-
-		int block_space = 4096 - block_offset;
-		int to_write = count - written;
-		if (block_space < to_write)
-			to_write = block_space;
-		
 		if (copy_from_user(bh->b_data + block_offset, buf, to_write)) {
 			brelse(bh);
 			return -EFAULT;
 		}
-		buf += to_write;
 
 		written += to_write;
+		buf += to_write;
 		*pos += to_write;
-		block_offset = 0;
-		iblock++;
-
-		inode->i_size += to_write;
-		mark_inode_dirty(inode);
 
 		mark_buffer_dirty(bh);
 		sync_dirty_buffer(bh);
@@ -268,6 +266,8 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	}
 
 	inode->i_mtime = inode_set_ctime_current(inode);
+	if (inode->i_size < *pos)
+		inode->i_size = *pos;
 	mark_inode_dirty(inode);
 	brelse(bh_index);
 	return written;
