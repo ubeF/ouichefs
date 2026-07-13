@@ -42,3 +42,33 @@ if [ "$(cat test.txt)" = "Salü" ]; then
 else
     echo "FAIL"
 fi
+
+echo ""
+echo "==================="
+echo "  File with Holes"
+echo "==================="
+
+rm -f test.txt
+echo -n "Moin" | dd of=test.txt bs=4096 seek=2 status=none
+
+echo "== Correct Filesize =="
+if [ "$(stat -c '%s' test.txt)" = "8196" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+fi
+
+echo "== Empty blocks are zero =="
+if [ "$(dd if=test.txt bs=8192 count=1 status=none | tr -d '\0' | wc -c)" = "0" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+fi
+
+echo "== Data is accessible =="
+if [ "$(tail -c 4 test.txt)" = "Moin" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+fi
+
