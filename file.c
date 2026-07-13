@@ -159,44 +159,39 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 		return -EIO;
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-	int read = 0;
-	while (read < count && *pos < inode->i_size) {
+	char *cursor = buf;
+	char *buf_end = buf + count;
+
+	for(int to_read; cursor < buf_end && *pos < inode->i_size; *pos += to_read, cursor += to_read) {
 		sector_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
 		int file_space = inode->i_size - *pos;
-		int to_read = count - read;
-		if (block_space < to_read)
-			to_read = block_space;
-		if (file_space < to_read)
-			to_read = file_space;
+		int buf_space = buf_end - buf;
+		to_read = min(buf_space, min(block_space, file_space));
 
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
 			break;
 		__le32 pblock = index->blocks[iblock];
 		if (pblock == 0) {
-			clear_user(buf, to_read);
+			clear_user(cursor, to_read);
 		} else {
 			struct buffer_head *bh = sb_bread(sb, pblock);
 			if (!bh) {
 				brelse(bh_index);
 				return -EIO;
 			}
-			if (copy_to_user(buf, bh->b_data + block_offset, to_read)) {
+			if (copy_to_user(cursor, bh->b_data + block_offset, to_read)) {
 				brelse(bh);
 				brelse(bh_index);
 				return -EFAULT;
 			}
 			brelse(bh);
 		}
-
-		read += to_read;
-		buf += to_read;
-		*pos += to_read;
 	}
 
 	brelse(bh_index);
-	return read;
+	return cursor - buf;
 }
 
 ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count, loff_t *pos) {
@@ -215,14 +210,15 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 		return -EIO;
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-	int written = 0;
-	while (written < count) {
-		int to_write = count - written;
+	const char *cursor = buf;
+	const char *buf_end = buf + count;
+
+	for(int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
 		sector_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
-		if (block_space < to_write)
-			to_write = block_space;
+		int buf_space = buf_end - buf;
+		to_write = min(buf_space, block_space);
 
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
 			break;
@@ -251,14 +247,10 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 				return -EIO;
 		}
 
-		if (copy_from_user(bh->b_data + block_offset, buf, to_write)) {
+		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
 			brelse(bh);
 			return -EFAULT;
 		}
-
-		written += to_write;
-		buf += to_write;
-		*pos += to_write;
 
 		mark_buffer_dirty(bh);
 		sync_dirty_buffer(bh);
@@ -270,7 +262,7 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 		inode->i_size = *pos;
 	mark_inode_dirty(inode);
 	brelse(bh_index);
-	return written;
+	return cursor - buf;
 }
 
 
