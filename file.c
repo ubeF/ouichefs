@@ -300,7 +300,6 @@ int ouichefs_truncate(struct inode *inode)
 		goto out;
 	}
 
-	truncate_pagecache(inode, inode->i_size);
 	ret = block_truncate_page(inode->i_mapping, inode->i_size, ouichefs_file_get_block);
 	if (ret < 0)
 		goto out_brelse;
