@@ -167,7 +167,7 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
 		int file_space = inode->i_size - *pos;
-		int buf_space = buf_end - buf;
+		int buf_space = buf_end - cursor;
 
 		to_read = min(buf_space, min(block_space, file_space));
 
@@ -219,7 +219,7 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 		sector_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
-		int buf_space = buf_end - buf;
+		int buf_space = buf_end - cursor;
 		to_write = min(buf_space, block_space);
 
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
@@ -243,6 +243,7 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 			if (!bh)
 				return -EIO;
 			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
+			set_buffer_uptodate(bh);
 		} else {
 			bh = sb_bread(sb, pblock);
 			if (!bh)
