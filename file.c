@@ -171,9 +171,10 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 
 		to_read = min(buf_space, min(block_space, file_space));
 
+		// Have to think about sending an error but I guess it is fine
 		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
 			break;
-		__le32 pblock = index->blocks[iblock];
+		sector_t pblock = le32_to_cpu(index->blocks[iblock]);
 		if (pblock == 0) {
 			clear_user(cursor, to_read);
 		} else {
@@ -195,17 +196,20 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 	return cursor - buf;
 }
 
-ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count, loff_t *pos)
+ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
 {
 	struct inode *inode = file->f_inode;
 	struct super_block *sb = inode->i_sb;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	ouichefs_truncate(inode); // removes blocks after end of file; filesize was already correctly set before write is called
-
+	// removes blocks after end of file; filesize was already correctly set before write is called
+	ouichefs_truncate(inode);
+	// Keep in mind this could cause a race condition if no locks before
+	// inode_lock(inode);
 	if (file->f_flags & O_APPEND)
 		*pos = inode->i_size;
+	// inode_unlock(inode);
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index)
@@ -222,13 +226,20 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 		int buf_space = buf_end - cursor;
 		to_write = min(buf_space, block_space);
 
-		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
+		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS) {
+			// If true do not modify file
+			if (cursor == buf) {
+				brelse(bh_index);
+				return -EFBIG;
+			}
 			break;
-		__le32 pblock = index->blocks[iblock];
+		}
+		sector_t pblock = le32_to_cpu(index->blocks[iblock]);
 		struct buffer_head *bh;
 		if (pblock == 0) {
 			pblock = get_free_block(sbi);
 			if (!pblock) {
+				brelse(bh_index);
 				return -ENOSPC;
 			}
 
@@ -240,18 +251,23 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 			sync_dirty_buffer(bh_index);
 
 			bh = sb_getblk(sb, pblock);
-			if (!bh)
+			if (!bh) {
+				brelse(bh_index);
 				return -EIO;
+			}
 			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
 			set_buffer_uptodate(bh);
 		} else {
 			bh = sb_bread(sb, pblock);
-			if (!bh)
+			if (!bh) {
+				brelse(bh_index);
 				return -EIO;
+			}
 		}
 
 		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
 			brelse(bh);
+			brelse(bh_index);
 			return -EFAULT;
 		}
 
@@ -267,7 +283,6 @@ ssize_t ouichefs_write (struct file *file, const char __user *buf, size_t count,
 	brelse(bh_index);
 	return cursor - buf;
 }
-
 
 const struct address_space_operations ouichefs_aops = {
 	.readahead = ouichefs_readahead,
