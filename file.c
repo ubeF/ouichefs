@@ -148,6 +148,142 @@ static int ouichefs_write_end(struct file *file, struct address_space *mapping,
 	return ret;
 }
 
+ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
+{
+	struct inode *inode = file->f_inode;
+	struct super_block *sb = inode->i_sb;
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+
+	if (!bh_index)
+		return -EIO;
+	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+	char *cursor = buf;
+	char *buf_end = buf + count;
+
+	for (int to_read; cursor < buf_end && *pos < inode->i_size; *pos += to_read, cursor += to_read) {
+		sector_t iblock = *pos / sb->s_blocksize;
+		int block_offset = *pos % sb->s_blocksize;
+		int block_space = sb->s_blocksize - block_offset;
+		int file_space = inode->i_size - *pos;
+		int buf_space = buf_end - cursor;
+
+		to_read = min(buf_space, min(block_space, file_space));
+
+		// Have to think about sending an error but I guess it is fine
+		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS)
+			break;
+		sector_t pblock = le32_to_cpu(index->blocks[iblock]);
+		if (pblock == 0) {
+			clear_user(cursor, to_read);
+		} else {
+			struct buffer_head *bh = sb_bread(sb, pblock);
+			if (!bh) {
+				brelse(bh_index);
+				return -EIO;
+			}
+			if (copy_to_user(cursor, bh->b_data + block_offset, to_read)) {
+				brelse(bh);
+				brelse(bh_index);
+				return -EFAULT;
+			}
+			brelse(bh);
+		}
+	}
+
+	brelse(bh_index);
+	return cursor - buf;
+}
+
+ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, loff_t *pos)
+{
+	struct inode *inode = file->f_inode;
+	struct super_block *sb = inode->i_sb;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+
+	// removes blocks after end of file; filesize was already correctly set before write is called
+	ouichefs_truncate(inode);
+	// Keep in mind this could cause a race condition if no locks before
+	// inode_lock(inode);
+	if (file->f_flags & O_APPEND)
+		*pos = inode->i_size;
+	// inode_unlock(inode);
+
+	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
+	if (!bh_index)
+		return -EIO;
+	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+	const char *cursor = buf;
+	const char *buf_end = buf + count;
+
+	for (int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
+		sector_t iblock = *pos / sb->s_blocksize;
+		int block_offset = *pos % sb->s_blocksize;
+		int block_space = sb->s_blocksize - block_offset;
+		int buf_space = buf_end - cursor;
+		to_write = min(buf_space, block_space);
+
+		if (iblock >= OUICHEFS_FILE_MAX_BLOCKS) {
+			// If true do not modify file
+			if (cursor == buf) {
+				brelse(bh_index);
+				return -EFBIG;
+			}
+			break;
+		}
+		sector_t pblock = le32_to_cpu(index->blocks[iblock]);
+		struct buffer_head *bh;
+		if (pblock == 0) {
+			pblock = get_free_block(sbi);
+			if (!pblock) {
+				brelse(bh_index);
+				return -ENOSPC;
+			}
+
+			index->blocks[iblock] = cpu_to_le32(pblock);
+			++inode->i_blocks;
+
+			mark_inode_dirty(inode);
+			mark_buffer_dirty(bh_index);
+			sync_dirty_buffer(bh_index);
+
+			bh = sb_getblk(sb, pblock);
+			if (!bh) {
+				brelse(bh_index);
+				return -EIO;
+			}
+			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
+			set_buffer_uptodate(bh);
+		} else {
+			bh = sb_bread(sb, pblock);
+			if (!bh) {
+				brelse(bh_index);
+				return -EIO;
+			}
+		}
+
+		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
+			brelse(bh);
+			brelse(bh_index);
+			return -EFAULT;
+		}
+
+		mark_buffer_dirty(bh);
+		sync_dirty_buffer(bh);
+		brelse(bh);
+	}
+
+	inode->i_mtime = inode_set_ctime_current(inode);
+	if (inode->i_size < *pos)
+		inode->i_size = *pos;
+	mark_inode_dirty(inode);
+	brelse(bh_index);
+	return cursor - buf;
+}
+
 const struct address_space_operations ouichefs_aops = {
 	.readahead = ouichefs_readahead,
 	.writepage = ouichefs_writepage,
@@ -157,6 +293,8 @@ const struct address_space_operations ouichefs_aops = {
 
 const struct file_operations ouichefs_file_ops = {
 	.owner = THIS_MODULE,
+	.read = ouichefs_read,
+	.write = ouichefs_write,
 	.llseek = generic_file_llseek,
 	.read_iter = generic_file_read_iter,
 	.write_iter = generic_file_write_iter,
