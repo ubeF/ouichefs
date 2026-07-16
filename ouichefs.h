@@ -7,7 +7,7 @@
 #ifndef _OUICHEFS_H
 #define _OUICHEFS_H
 
-#include "linux/types.h"
+#include <linux/types.h>
 #include <linux/fs.h>
 
 #define OUICHEFS_MAGIC 0x48434957

@@ -12,7 +12,6 @@
 #include <linux/fs.h>
 #include <linux/buffer_head.h>
 #include <linux/mpage.h>
-#include "linux/minmax.h"
 
 #include "ouichefs.h"
 #include "bitmap.h"
@@ -61,6 +60,7 @@ static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 		}
 
 		index->blocks[iblock].start = cpu_to_le32(bno);
+		index->blocks[iblock].count = cpu_to_le32(1);
 		++inode->i_blocks;
 
 		mark_inode_dirty(inode);
@@ -247,6 +247,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			}
 
 			index->blocks[iblock].start = cpu_to_le32(pblock);
+			index->blocks[iblock].count = cpu_to_le32(1);
 			++inode->i_blocks;
 
 			mark_inode_dirty(inode);
@@ -289,26 +290,29 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_addr)
 {
-    if (cmd == OUICHEFS_IOC_GET_EXTENTS) {
+	if (cmd == OUICHEFS_IOC_GET_EXTENTS) {
 		struct inode *inode = file_desc->f_inode;
-        struct super_block *sb = inode->i_sb;
-        struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
-        struct ouichefs_file_index_block *index;
-        struct buffer_head *bh_index;
+		struct super_block *sb = inode->i_sb;
+		struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
+		struct ouichefs_file_index_block *index;
+		struct buffer_head *bh_index;
 
-        bh_index = sb_bread(sb, inode_info->index_block);
-        if (!bh_index)
-            return -EIO;
-        index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		bh_index = sb_bread(sb, inode_info->index_block);
+		if (!bh_index)
+			return -EIO;
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
 		struct ouichefs_extent extent;
-        
-        printk("ouichefs: extents for inode %lu: %llu extent(s)\n", inode->i_ino, inode->i_blocks);
-        for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
+
+		printk("ouichefs: extents for inode %lu: %llu extent(s)\n", inode->i_ino, inode->i_blocks);
+		for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
 			extent = index->blocks[i];
-			printk("[%lu] start=%d count=%d (blocks %d-%d)\n",
-				i, extent.start, extent.count, extent.start, extent.start + max(extent.count -1, 0));
-        }
+			if (extent.count == 0)
+				break;
+			printk("[%lu] start=%d count=%d (blocks %d-%d)\n", i,
+			       extent.start, extent.count, extent.start,
+			       extent.start + max(extent.count - 1, 0));
+		}
 		brelse(bh_index);
 	} else {
 		return -ENOTTY;
@@ -366,6 +370,7 @@ int ouichefs_truncate(struct inode *inode)
 		--inode->i_blocks;
 
 		index->blocks[i].start = cpu_to_le32(0);
+		index->blocks[i].count = cpu_to_le32(0);
 	}
 
 	mark_buffer_dirty(bh);
