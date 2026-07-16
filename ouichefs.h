@@ -7,6 +7,7 @@
 #ifndef _OUICHEFS_H
 #define _OUICHEFS_H
 
+#include <linux/types.h>
 #include <linux/fs.h>
 
 #define OUICHEFS_MAGIC 0x48434957
@@ -18,6 +19,7 @@
 #define OUICHEFS_MAX_FILESIZE (OUICHEFS_FILE_MAX_BLOCKS * OUICHEFS_BLOCK_SIZE) /* 4 MiB */
 #define OUICHEFS_FILENAME_LEN 28
 #define OUICHEFS_MAX_SUBFILES 128
+#define OUICHEFS_MAX_EXTENTS (OUICHEFS_BLOCK_SIZE / sizeof(struct ouichefs_extent))
 
 /*
  * ouiche_fs partition layout
@@ -78,8 +80,13 @@ struct ouichefs_sb_info {
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
 };
 
+struct ouichefs_extent {
+	uint32_t start; /* first physical block number of the run */
+	uint32_t count; /* number of consecutive blocks in the run */
+};
+
 struct ouichefs_file_index_block {
-	__le32 blocks[OUICHEFS_FILE_MAX_BLOCKS];
+	struct ouichefs_extent blocks[OUICHEFS_MAX_EXTENTS];
 };
 
 struct ouichefs_dir_block {
