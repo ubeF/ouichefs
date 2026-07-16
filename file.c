@@ -302,14 +302,20 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 			return -EIO;
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-		struct ouichefs_extent extent;
-
-		printk("ouichefs: extents for inode %lu: %llu extent(s)\n", inode->i_ino, inode->i_blocks);
-		for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
-			extent = index->blocks[i];
+		// I hate iterating twice but it works i guess
+		size_t i;
+		for (i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
+			 struct ouichefs_extent extent = index->blocks[i];
 			if (extent.count == 0)
 				break;
-			printk("[%lu] start=%d count=%d (blocks %d-%d)\n", i,
+		}
+
+		printk("ouichefs: extents for inode %lu: %lu extent(s)\n", inode->i_ino, i);
+		for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
+			struct ouichefs_extent extent = index->blocks[i];
+			if (extent.count == 0)
+				break;
+			printk("  [%lu] start=%d count=%d (blocks %d-%d)\n", i,
 			       extent.start, extent.count, extent.start,
 			       extent.start + max(extent.count - 1, 0));
 		}
