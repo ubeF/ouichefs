@@ -102,8 +102,6 @@ int main(int argc, char **argv)
 }
 ' > get_extents_ioctl.c
 
-ls
-
 if ! gcc get_extents_ioctl.c -o /tmp/get_extents_ioctl; then
 	echo "Cannot compile user program!"
 	exit 1
