@@ -72,3 +72,49 @@ else
     echo "FAIL"
 fi
 
+echo ""
+echo "============================"
+echo "  Test Get Extents IOCTL"
+echo "============================"
+
+rm -f test.txt
+cp ../ouichefs/extent_ioctl.h .
+
+printf "%s" '
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#include "extent_ioctl.h"
+
+int main(int argc, char **argv)
+{
+    int fd = open(argv[1], O_RDONLY);
+
+    if (fd < 0)
+        return 1;
+
+    if (ioctl(fd, OUICHEFS_IOC_GET_EXTENTS) < 0)
+        return 1;
+
+    close(fd);
+    return 0;
+}
+' > get_extents_ioctl.c
+
+ls
+
+if ! gcc get_extents_ioctl.c -o /tmp/get_extents_ioctl; then
+	echo "Cannot compile user program!"
+	exit 1
+fi
+
+echo "Moin" > test.txt
+
+if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
+    echo "Failed to run user program!"
+    exit 1
+else
+    echo "PASS"
+fi
+
