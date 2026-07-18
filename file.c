@@ -151,6 +151,26 @@ static int ouichefs_write_end(struct file *file, struct address_space *mapping,
 	return ret;
 }
 
+/* Translate extent list to physical blocks */
+static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint32_t logical_block)
+{
+	if (!extents)
+		return 0;
+	for (uint32_t i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
+		uint32_t start = le32_to_cpu(extents[i].start);
+		uint32_t count = le32_to_cpu(extents[i].count);
+		
+		if (count == 0)
+			return 0;
+		if (logical_block < count)
+			return start + logical_block;
+		/* Look up the physical block in the next extend */
+		logical_block -= count;
+	}
+
+	return 0;
+}
+
 ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	struct inode *inode = file->f_inode;
@@ -175,9 +195,11 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 		to_read = min(buf_space, min(block_space, file_space));
 
 		// Have to think about sending an error but I guess it is fine
-		if (iblock >= OUICHEFS_MAX_EXTENTS)
-			break;
-		sector_t pblock = le32_to_cpu(index->blocks[iblock].start);
+		// Doesnt make any sense now with extents
+		// if (iblock >= OUICHEFS_MAX_EXTENTS)
+		// 	break;
+		// sector_t pblock = le32_to_cpu(index->blocks[iblock].start);
+		sector_t pblock = ouichefs_extent_get_block(index->blocks, iblock);
 		if (pblock == 0) {
 			clear_user(cursor, to_read);
 		} else {
