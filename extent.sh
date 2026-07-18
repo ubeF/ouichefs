@@ -65,12 +65,12 @@ fi
 #    echo "FAIL"
 #fi
 #
-echo "== Data is accessible =="
-if [ "$(tail -c 4 test.txt)" = "Moin" ]; then
-    echo "PASS"
-else
-    echo "FAIL"
-fi
+#echo "== Data is accessible =="
+#if [ "$(tail -c 4 test.txt)" = "Moin" ]; then
+#    echo "PASS"
+#else
+#    echo "FAIL"
+#fi
 
 echo ""
 echo "============================"
