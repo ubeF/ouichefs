@@ -86,7 +86,8 @@ struct ouichefs_extent {
 };
 
 struct ouichefs_file_index_block {
-	struct ouichefs_extent blocks[OUICHEFS_MAX_EXTENTS];
+	struct ouichefs_extent extents[OUICHEFS_MAX_EXTENTS];
+	uint32_t num_extents;
 };
 
 struct ouichefs_dir_block {
