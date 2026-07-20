@@ -251,15 +251,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		int buf_space = buf_end - cursor;
 		to_write = min(buf_space, block_space);
 
-		if (iblock >= OUICHEFS_MAX_EXTENTS) {
-			// If true do not modify file
-			if (cursor == buf) {
-				brelse(bh_index);
-				return -EFBIG;
-			}
-			break;
-		}
-		sector_t pblock = le32_to_cpu(index->extents[iblock].start);
+		sector_t pblock = ouichefs_extent_get_block(index->extents, iblock);
 		struct buffer_head *bh;
 		if (pblock == 0) {
 			pblock = get_free_block(sbi);
@@ -268,10 +260,23 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 				return -ENOSPC;
 			}
 
-			index->extents[iblock].start = cpu_to_le32(pblock);
-			index->extents[iblock].count = cpu_to_le32(1);
-			++inode->i_blocks;
+			// We assume sequential writes; so we can assume that we reached the end of the stored extents
+			struct ouichefs_extent *last_extent = &index->extents[index->num_extents - 1];
+			if (index->num_extents > 0 && last_extent->start + last_extent->count == pblock) {
+				last_extent->count++;
+			} else {
+				if (index->num_extents >= OUICHEFS_MAX_EXTENTS) {
+					brelse(bh_index);
+					put_block(sbi, pblock);
+					return -ENOSPC;
+				}
+				struct ouichefs_extent *extent = &index->extents[index->num_extents];
+				extent->start = cpu_to_le32(pblock);
+				extent->count = cpu_to_le32(1);
+				index->num_extents++;
+			}
 
+			inode->i_blocks++;
 			mark_inode_dirty(inode);
 			mark_buffer_dirty(bh_index);
 			sync_dirty_buffer(bh_index);
