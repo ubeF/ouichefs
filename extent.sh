@@ -36,8 +36,8 @@ else
 fi
 
 echo "== Overwrite =="
-echo "Salü" > test.txt
-if [ "$(cat test.txt)" = "Salü" ]; then
+echo "Salet" > test.txt
+if [ "$(cat test.txt)" = "Salet" ]; then
     echo "PASS"
 else
     echo "FAIL"

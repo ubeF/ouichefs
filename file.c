@@ -240,6 +240,8 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	if (!bh_index)
 		return -EIO;
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
+	struct ouichefs_extent *extents = index->extents;
+	uint32_t num_extents = le32_to_cpu(index->num_extents);
 
 	const char *cursor = buf;
 	const char *buf_end = buf + count;
@@ -251,29 +253,36 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		int buf_space = buf_end - cursor;
 		to_write = min(buf_space, block_space);
 
-		sector_t pblock = ouichefs_extent_get_block(index->extents, iblock);
+		sector_t pblock = ouichefs_extent_get_block(extents, iblock);
 		struct buffer_head *bh;
 		if (pblock == 0) {
 			pblock = get_free_block(sbi);
 			if (!pblock) {
 				brelse(bh_index);
+				printk("ouichefs: ran out of free blocks\n");
 				return -ENOSPC;
 			}
 
 			// We assume sequential writes; so we can assume that we reached the end of the stored extents
-			struct ouichefs_extent *last_extent = &index->extents[index->num_extents - 1];
-			if (index->num_extents > 0 && last_extent->start + last_extent->count == pblock) {
-				last_extent->count++;
+			struct ouichefs_extent *last_extent = NULL;
+
+			if (num_extents > 0)
+				last_extent = &extents[num_extents - 1];
+
+			if (last_extent && le32_to_cpu(last_extent->start) + le32_to_cpu(last_extent->count) == pblock) {
+				last_extent->count = cpu_to_le32(le32_to_cpu(last_extent->count) + 1); // is this necessary?
 			} else {
-				if (index->num_extents >= OUICHEFS_MAX_EXTENTS) {
+				if (num_extents >= OUICHEFS_MAX_EXTENTS) {
 					brelse(bh_index);
 					put_block(sbi, pblock);
+					printk("ouichefs: file %s reached maximum number of extents\n", file->f_path.dentry->d_name.name);
 					return -ENOSPC;
 				}
-				struct ouichefs_extent *extent = &index->extents[index->num_extents];
+				struct ouichefs_extent *extent = &extents[num_extents];
 				extent->start = cpu_to_le32(pblock);
 				extent->count = cpu_to_le32(1);
-				index->num_extents++;
+				num_extents++;
+				index->num_extents = cpu_to_le32(num_extents) ;
 			}
 
 			inode->i_blocks++;
@@ -329,7 +338,7 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 			return -EIO;
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-		printk("ouichefs: extents for inode %lu: %du extent(s)\n", inode->i_ino, index->num_extents);
+		printk("ouichefs: extents for inode %lu: %d extent(s)\n", inode->i_ino, le32_to_cpu(index->num_extents));
 		for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
 			struct ouichefs_extent extent = index->extents[i];
 			if (extent.count == 0)
@@ -370,7 +379,7 @@ int ouichefs_truncate(struct inode *inode)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
 	struct buffer_head *bh;
-	size_t next_num_blocks;
+	size_t required_num_blocks;
 
 	bh = sb_bread(sb, inode_info->index_block);
 	if (!bh) {
@@ -384,13 +393,43 @@ int ouichefs_truncate(struct inode *inode)
 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh->b_data;
 
-	next_num_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
-	for (size_t i = next_num_blocks; i < OUICHEFS_MAX_EXTENTS; ++i) {
+	size_t extent_num;
+	required_num_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
+
+	// find last required extent
+	for (extent_num = 0; extent_num < OUICHEFS_MAX_EXTENTS; extent_num++) {
+		size_t start = le32_to_cpu(index->extents[extent_num].start);
+		size_t count = le32_to_cpu(index->extents[extent_num].count);
+		if (!start || !count) {
+			printk("ouichefs: file has holes! we currently don't handle those!\n");
+			return -EINVAL;
+		}
+		if (required_num_blocks < count)
+			break;
+		required_num_blocks -= count;
+	}
+
+	if (extent_num >= OUICHEFS_MAX_EXTENTS) {
+		printk("ouichefs: File is too big!\n");
+		return -ENOSPC;
+	}
+
+	// shorten extent
+	for (size_t i = required_num_blocks; i < le32_to_cpu(index->extents[extent_num].count); i++) {
+		put_block(sbi, le32_to_cpu(index->extents[extent_num].start) + i);
+		--inode->i_blocks;
+	}
+	index->extents[extent_num].count = cpu_to_le32(required_num_blocks);
+
+	index->num_extents = cpu_to_le32(extent_num++);
+
+	// wipe remaining extents
+	for (size_t i = extent_num; i < OUICHEFS_MAX_EXTENTS; ++i) {
 		uint32_t start = le32_to_cpu(index->extents[i].start);
 		uint32_t count = le32_to_cpu(index->extents[i].count);
 
-		if (!start)
-			continue;
+		if (!start || !count)
+			break;
 
 		for (uint32_t j = 0; j < count; j++) {
 			put_block(sbi, start + j);

@@ -19,7 +19,7 @@
 #define OUICHEFS_MAX_FILESIZE (OUICHEFS_FILE_MAX_BLOCKS * OUICHEFS_BLOCK_SIZE) /* 4 MiB */
 #define OUICHEFS_FILENAME_LEN 28
 #define OUICHEFS_MAX_SUBFILES 128
-#define OUICHEFS_MAX_EXTENTS (OUICHEFS_BLOCK_SIZE / sizeof(struct ouichefs_extent))
+#define OUICHEFS_MAX_EXTENTS (OUICHEFS_BLOCK_SIZE / sizeof(struct ouichefs_extent)) - 1
 
 /*
  * ouiche_fs partition layout
@@ -86,8 +86,8 @@ struct ouichefs_extent {
 };
 
 struct ouichefs_file_index_block {
-	struct ouichefs_extent extents[OUICHEFS_MAX_EXTENTS];
 	uint32_t num_extents;
+	struct ouichefs_extent extents[OUICHEFS_MAX_EXTENTS];
 };
 
 struct ouichefs_dir_block {
