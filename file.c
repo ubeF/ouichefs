@@ -386,13 +386,16 @@ int ouichefs_truncate(struct inode *inode)
 
 	next_num_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 	for (size_t i = next_num_blocks; i < OUICHEFS_MAX_EXTENTS; ++i) {
-		uint32_t bno = le32_to_cpu(index->extents[i].start);
+		uint32_t start = le32_to_cpu(index->extents[i].start);
+		uint32_t count = le32_to_cpu(index->extents[i].count);
 
-		if (!bno)
+		if (!start)
 			continue;
 
-		put_block(sbi, bno);
-		--inode->i_blocks;
+		for (uint32_t j = 0; j < count; j++) {
+			put_block(sbi, start + j);
+			--inode->i_blocks;
+		}
 
 		index->extents[i].start = cpu_to_le32(0);
 		index->extents[i].count = cpu_to_le32(0);
