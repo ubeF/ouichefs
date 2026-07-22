@@ -228,8 +228,6 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	// removes blocks after end of file; filesize was already correctly set before write is called
-	ouichefs_truncate(inode);
 	// Keep in mind this could cause a race condition if no locks before
 	// inode_lock(inode);
 	if (file->f_flags & O_APPEND)
@@ -398,12 +396,9 @@ int ouichefs_truncate(struct inode *inode)
 
 	// find last required extent
 	for (extent_num = 0; extent_num < OUICHEFS_MAX_EXTENTS; extent_num++) {
-		size_t start = le32_to_cpu(index->extents[extent_num].start);
 		size_t count = le32_to_cpu(index->extents[extent_num].count);
-		if (!start || !count) {
-			printk("ouichefs: file has holes! we currently don't handle those!\n");
-			ret = -EINVAL;
-			goto out_brelse;
+		if (!count) {
+			break;
 		}
 		if (required_num_blocks < count)
 			break;

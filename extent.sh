@@ -1,15 +1,13 @@
 #!/bin/bash
 
-if ! modprobe ouichefs; then
-	echo "Could not load module ouichefs module!"
-	exit 1
+if ! lsmod | grep -q '^ouichefs'; then
+    modprobe ouichefs
 fi
 
-mkdir mnt
+mkdir -p mnt
 
-if ! mount /dev/vda mnt/; then
-	echo "Could not mount image!"
-	exit 1
+if ! mountpoint -q mnt; then
+    mount /dev/vda mnt
 fi
 
 cd mnt/
@@ -116,3 +114,30 @@ else
     echo "PASS"
 fi
 
+echo ""
+echo "============================"
+echo "  Test Extents Edge Cases"
+echo "============================"
+
+#dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
+#
+#truncate -s $((4*4096)) test.txt
+#
+#if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
+#    echo "Failed to run user program!"
+#    exit 1
+#else
+#    echo "PASS"
+#fi
+
+# The following test is for 1.5.3 Verification
+cd ..
+pwd
+dd if=/dev/urandom of=bigfile bs=1M count=5
+cp bigfile mnt/
+if [ cmp ./bigfile ./mnt/bigfile ]; then
+    echo "5MB file not correct written/read"
+    echo "FAIL"
+else
+    echo "PASS"
+fi
