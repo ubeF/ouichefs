@@ -134,19 +134,26 @@ echo "============================"
 echo "== Test Extents Big File Size =="
 
 cd ..
-pwd
 dd if=/dev/urandom of=bigfile bs=1M count=5
 cp bigfile mnt/
-if [ cmp ./bigfile ./mnt/bigfile ]; then
+if cmp ./bigfile ./mnt/bigfile; then
+    echo "PASS"
+else
     echo "5MB file not correct written/read"
     echo "FAIL"
-else
-    echo "PASS"
 fi
 
-if ! output=$(/tmp/get_extents_ioctl "ouichefs/bigfile"); then
+# Since ioctl is only writing to dmesg, we check dmesg for correct output
+dmesg -C
+
+if ! /tmp/get_extents_ioctl "mnt/bigfile"; then
     echo "Failed to run user program!"
     exit 1
-else
+fi
+
+if dmesg | grep -q "count=1280"; then
     echo "PASS"
+else
+    echo "Did not return correct block count"
+    exit 1
 fi
