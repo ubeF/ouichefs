@@ -119,16 +119,45 @@ echo "============================"
 echo "  Test Extents Edge Cases"
 echo "============================"
 
-#dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
-#
-#truncate -s $((4*4096)) test.txt
-#
-#if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
-#    echo "Failed to run user program!"
-#    exit 1
-#else
-#    echo "PASS"
-#fi
+echo "== Test Truncate File =="
+
+dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
+
+truncate -s $((4*4096)) test.txt
+
+dmesg -C
+
+if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "count=4"; then
+    echo "PASS"
+else
+    echo "Wrong block count received"
+    exit 1
+fi
+
+echo "== Test Truncate to Size Zero =="
+
+dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
+
+truncate -s 0 test.txt
+
+dmesg -C
+
+if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "0 extent(s)"; then
+    echo "PASS"
+else
+    echo "Wrong extents number received"
+    exit 1
+fi
 
 # The following test is for 1.5.3 Verification
 echo "== Test Extents Big File Size =="
@@ -143,7 +172,6 @@ else
     echo "FAIL"
 fi
 
-# Since ioctl is only writing to dmesg, we check dmesg for correct output
 dmesg -C
 
 if ! /tmp/get_extents_ioctl "mnt/bigfile"; then
@@ -151,7 +179,7 @@ if ! /tmp/get_extents_ioctl "mnt/bigfile"; then
     exit 1
 fi
 
-if dmesg | grep -q "count=1280"; then
+if [ "$(dmesg | grep "count=" | awk -F'count=' '{sum += $2} END {print sum}')" -eq 1280 ]; then
     echo "PASS"
 else
     echo "Did not return correct block count"
