@@ -396,9 +396,12 @@ int ouichefs_truncate(struct inode *inode)
 
 	/* find last required extent */
 	for (extent_num = 0; extent_num < OUICHEFS_MAX_EXTENTS; extent_num++) {
-		size_t count = index->extents[extent_num].count;
-		if (!count) {
-			break;
+		size_t start = le32_to_cpu(index->extents[extent_num].start);
+		size_t count = le32_to_cpu(index->extents[extent_num].count);
+		if (!start || !count) {
+			printk("ouichefs: file has holes! we currently don't handle those!\n");
+			ret = -EINVAL;
+			goto out_brelse;
 		}
 		if (required_num_blocks < count)
 			break;
