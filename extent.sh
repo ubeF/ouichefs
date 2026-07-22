@@ -1,15 +1,13 @@
 #!/bin/bash
 
-if ! modprobe ouichefs; then
-	echo "Could not load module ouichefs module!"
-	exit 1
+if ! lsmod | grep -q '^ouichefs'; then
+    modprobe ouichefs
 fi
 
-mkdir mnt
+mkdir -p mnt
 
-if ! mount /dev/vda mnt/; then
-	echo "Could not mount image!"
-	exit 1
+if ! mountpoint -q mnt; then
+    mount /dev/vda mnt
 fi
 
 cd mnt/
@@ -36,8 +34,8 @@ else
 fi
 
 echo "== Overwrite =="
-echo "Salü" > test.txt
-if [ "$(cat test.txt)" = "Salü" ]; then
+echo "Salet" > test.txt
+if [ "$(cat test.txt)" = "Salet" ]; then
     echo "PASS"
 else
     echo "FAIL"
@@ -116,3 +114,74 @@ else
     echo "PASS"
 fi
 
+echo ""
+echo "============================"
+echo "  Test Extents Edge Cases"
+echo "============================"
+
+echo "== Test Truncate File =="
+
+dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
+
+truncate -s $((4096)) test.txt
+
+dmesg -C
+
+if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "count=1"; then
+    echo "PASS"
+else
+    echo "Wrong block count received"
+    exit 1
+fi
+
+echo "== Test Truncate to Size Zero =="
+
+dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
+
+truncate -s 0 test.txt
+
+dmesg -C
+
+if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "0 extent(s)"; then
+    echo "PASS"
+else
+    echo "Wrong extents number received"
+    exit 1
+fi
+
+# The following test is for 1.5.3 Verification
+echo "== Test Extents Big File Size =="
+
+cd ..
+dd if=/dev/urandom of=bigfile bs=1M count=5
+cp bigfile mnt/
+if cmp ./bigfile ./mnt/bigfile; then
+    echo "PASS"
+else
+    echo "5MB file not correct written/read"
+    echo "FAIL"
+fi
+
+dmesg -C
+
+if ! /tmp/get_extents_ioctl "mnt/bigfile"; then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if [ "$(dmesg | grep "count=" | awk -F'count=' '{sum += $2} END {print sum}')" -eq 1280 ]; then
+    echo "PASS"
+else
+    echo "Did not return correct block count"
+    exit 1
+fi
