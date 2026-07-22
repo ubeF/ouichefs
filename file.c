@@ -377,7 +377,7 @@ int ouichefs_truncate(struct inode *inode)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
 	struct buffer_head *bh;
-	size_t required_num_blocks;
+	uint32_t required_num_blocks;
 
 	bh = sb_bread(sb, inode_info->index_block);
 	if (!bh) {
@@ -394,9 +394,9 @@ int ouichefs_truncate(struct inode *inode)
 	size_t extent_num;
 	required_num_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
-	// find last required extent
+	/* find last required extent */
 	for (extent_num = 0; extent_num < OUICHEFS_MAX_EXTENTS; extent_num++) {
-		size_t count = le32_to_cpu(index->extents[extent_num].count);
+		size_t count = index->extents[extent_num].count;
 		if (!count) {
 			break;
 		}
@@ -411,9 +411,9 @@ int ouichefs_truncate(struct inode *inode)
 		goto out_brelse;
 	}
 
-	// shorten extent
-	for (size_t i = required_num_blocks; i < le32_to_cpu(index->extents[extent_num].count); i++) {
-		put_block(sbi, le32_to_cpu(index->extents[extent_num].start) + i);
+	/* shorten extent */
+	for (size_t i = required_num_blocks; i < index->extents[extent_num].count; i++) {
+		put_block(sbi, index->extents[extent_num].start + i);
 		--inode->i_blocks;
 	}
 	index->extents[extent_num].count = cpu_to_le32(required_num_blocks);

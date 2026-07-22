@@ -131,6 +131,8 @@ echo "============================"
 #fi
 
 # The following test is for 1.5.3 Verification
+echo "== Test Extents Big File Size =="
+
 cd ..
 pwd
 dd if=/dev/urandom of=bigfile bs=1M count=5
@@ -138,6 +140,13 @@ cp bigfile mnt/
 if [ cmp ./bigfile ./mnt/bigfile ]; then
     echo "5MB file not correct written/read"
     echo "FAIL"
+else
+    echo "PASS"
+fi
+
+if ! output=$(/tmp/get_extents_ioctl "ouichefs/bigfile"); then
+    echo "Failed to run user program!"
+    exit 1
 else
     echo "PASS"
 fi
