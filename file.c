@@ -402,7 +402,8 @@ int ouichefs_truncate(struct inode *inode)
 		size_t count = le32_to_cpu(index->extents[extent_num].count);
 		if (!start || !count) {
 			printk("ouichefs: file has holes! we currently don't handle those!\n");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out_brelse;
 		}
 		if (required_num_blocks < count)
 			break;
@@ -411,7 +412,8 @@ int ouichefs_truncate(struct inode *inode)
 
 	if (extent_num >= OUICHEFS_MAX_EXTENTS) {
 		printk("ouichefs: File is too big!\n");
-		return -ENOSPC;
+		ret = -ENOSPC;
+		goto out_brelse;
 	}
 
 	// shorten extent
