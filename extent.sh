@@ -123,7 +123,7 @@ echo "== Test Truncate File =="
 
 dd if=/dev/zero of=test.txt bs=4096 count=8 status=none
 
-truncate -s $((4*4096)) test.txt
+truncate -s $((4096)) test.txt
 
 dmesg -C
 
@@ -132,7 +132,7 @@ if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
     exit 1
 fi
 
-if dmesg | grep -q "count=4"; then
+if dmesg | grep -q "count=1"; then
     echo "PASS"
 else
     echo "Wrong block count received"
