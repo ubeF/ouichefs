@@ -223,5 +223,34 @@ else
     exit 1
 fi
 
+echo ""
+echo "===================================="
+echo "  Test Validate Block Reservation"
+echo "===================================="
 
+rm *
+
+touch test1.txt
+touch test2.txt
+
+count=1
+while [ $count -le 5 ]; do
+    echo "$(count)" >> test1.txt
+    echo "$(count)" >> test2.txt
+    ((count++))
+done
+
+dmesg -C
+
+if ! /tmp/get_extents_ioctl "test1.txt"; then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "1 extent(s)"; then
+    echo "PASS"
+else
+    echo "Wrong extents number received"
+    exit 1
+fi
 
