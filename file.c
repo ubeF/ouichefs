@@ -102,14 +102,14 @@ static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 			goto brelse_index;
 		}
 
-		index->extents[iblock].start = cpu_to_le32(bno);
-		index->extents[iblock].count = cpu_to_le32(1);
+		index->extents[iblock].start = bno;
+		index->extents[iblock].count = 1;
 		++inode->i_blocks;
 
 		mark_inode_dirty(inode);
 		mark_buffer_dirty(bh_index);
 	} else {
-		bno = le32_to_cpu(index->extents[iblock].start);
+		bno = index->extents[iblock].start;
 	}
 
 	/* Map the physical block to the given buffer_head */
@@ -200,8 +200,8 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 	if (!extents)
 		return 0;
 	for (uint32_t i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
-		uint32_t start = le32_to_cpu(extents[i].start);
-		uint32_t count = le32_to_cpu(extents[i].count);
+		uint32_t start = extents[i].start;
+		uint32_t count = extents[i].count;
 		
 		if (count == 0)
 			return 0;
@@ -271,21 +271,20 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	// Keep in mind this could cause a race condition if no locks before
-	// inode_lock(inode);
+	inode_lock(inode);
 	if (file->f_flags & O_APPEND)
 		*pos = inode->i_size;
-	// inode_unlock(inode);
+	inode_unlock(inode);
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index)
 		return -EIO;
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 	struct ouichefs_extent *extents = index->extents;
-	uint32_t num_extents = le32_to_cpu(index->num_extents);
+	uint32_t num_extents = index->num_extents;
 
-	const char *cursor = buf;
-	const char *buf_end = buf + count;
+	const char __user *cursor = buf;
+	const char __user *buf_end = buf + count;
 
 	for (int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
 		uint32_t iblock = *pos / sb->s_blocksize;
@@ -308,8 +307,8 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			if (num_extents > 0)
 				last_extent = &extents[num_extents - 1];
 
-			if (last_extent && le32_to_cpu(last_extent->start) + le32_to_cpu(last_extent->count) == pblock) {
-				last_extent->count = cpu_to_le32(le32_to_cpu(last_extent->count) + 1); // is this necessary?
+			if (last_extent && last_extent->start + last_extent->count == pblock) {
+				last_extent->count = last_extent->count++;
 			} else {
 				if (num_extents >= OUICHEFS_MAX_EXTENTS) {
 					brelse(bh_index);
@@ -318,10 +317,10 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 					return -ENOSPC;
 				}
 				struct ouichefs_extent *extent = &extents[num_extents];
-				extent->start = cpu_to_le32(pblock);
-				extent->count = cpu_to_le32(1);
+				extent->start = pblock;
+				extent->count = 1;
 				num_extents++;
-				index->num_extents = cpu_to_le32(num_extents) ;
+				index->num_extents = num_extents;
 			}
 
 			inode->i_blocks++;
@@ -331,6 +330,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 			bh = sb_getblk(sb, pblock);
 			if (!bh) {
+				put_block(sbi, pblock);
 				brelse(bh_index);
 				return -EIO;
 			}
@@ -379,7 +379,7 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 		}
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-		printk("ouichefs: extents for inode %lu: %d extent(s)\n", inode->i_ino, le32_to_cpu(index->num_extents));
+		printk("ouichefs: extents for inode %lu: %d extent(s)\n", inode->i_ino, index->num_extents);
 		for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
 			struct ouichefs_extent extent = index->extents[i];
 			if (extent.count == 0)
@@ -440,8 +440,8 @@ int ouichefs_truncate(struct inode *inode)
 
 	/* find last required extent */
 	for (extent_num = 0; extent_num < OUICHEFS_MAX_EXTENTS; extent_num++) {
-		size_t start = le32_to_cpu(index->extents[extent_num].start);
-		size_t count = le32_to_cpu(index->extents[extent_num].count);
+		size_t start = index->extents[extent_num].start;
+		size_t count = index->extents[extent_num].count;
 		if (!start || !count) {
 			printk("ouichefs: file has holes! we currently don't handle those!\n");
 			ret = -EINVAL;
@@ -463,14 +463,14 @@ int ouichefs_truncate(struct inode *inode)
 		put_block(sbi, index->extents[extent_num].start + i);
 		--inode->i_blocks;
 	}
-	index->extents[extent_num].count = cpu_to_le32(required_num_blocks);
+	index->extents[extent_num].count = required_num_blocks;
 
-	index->num_extents = cpu_to_le32(extent_num++);
+	index->num_extents = extent_num++;
 
 	// wipe remaining extents
 	for (size_t i = extent_num; i < OUICHEFS_MAX_EXTENTS; ++i) {
-		uint32_t start = le32_to_cpu(index->extents[i].start);
-		uint32_t count = le32_to_cpu(index->extents[i].count);
+		uint32_t start = index->extents[i].start;
+		uint32_t count = index->extents[i].count;
 
 		if (!start || !count)
 			break;
@@ -480,8 +480,8 @@ int ouichefs_truncate(struct inode *inode)
 			--inode->i_blocks;
 		}
 
-		index->extents[i].start = cpu_to_le32(0);
-		index->extents[i].count = cpu_to_le32(0);
+		index->extents[i].start = 0;
+		index->extents[i].count = 0;
 	}
 
 	mark_buffer_dirty(bh);
