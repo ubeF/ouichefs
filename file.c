@@ -271,10 +271,10 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	inode_lock(inode);
+	//inode_lock(inode);
 	if (file->f_flags & O_APPEND)
 		*pos = inode->i_size;
-	inode_unlock(inode);
+	//inode_unlock(inode);
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index)
@@ -295,27 +295,61 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 		uint32_t pblock = ouichefs_extent_get_block(extents, iblock);
 		struct buffer_head *bh;
+		bool new_block = false;
+		bool extent_last = false;
+		struct ouichefs_extent *last_extent = NULL;
+
 		if (pblock == 0) {
 			if (!ouichefs_alloc_contiguous(sb, 1, &pblock)) {
 				brelse(bh_index);
 				return -ENOSPC;
 			}
 
-			// We assume sequential writes; so we can assume that we reached the end of the stored extents
-			struct ouichefs_extent *last_extent = NULL;
-
 			if (num_extents > 0)
 				last_extent = &extents[num_extents - 1];
 
-			if (last_extent && last_extent->start + last_extent->count == pblock) {
-				last_extent->count = last_extent->count++;
+			extent_last = last_extent && last_extent->start + last_extent->count == pblock;
+
+			if (!extent_last && num_extents >= OUICHEFS_MAX_EXTENTS) {
+				put_block(sbi, pblock);
+				brelse(bh_index);
+				printk("ouichefs: file %s reached maximum number of extents\n", file->f_path.dentry->d_name.name);
+				return -ENOSPC;
+			}
+
+			bh = sb_getblk(sb, pblock);
+			if (!bh) {
+				put_block(sbi, pblock);
+				brelse(bh_index);
+				return -EIO;
+			}
+			new_block = true;
+			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
+			set_buffer_uptodate(bh);
+
+					} else {
+			bh = sb_bread(sb, pblock);
+			if (!bh) {
+				brelse(bh_index);
+				return -EIO;
+			}
+		}
+
+		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
+			if (new_block) {
+				bforget(bh);
+				put_block(sbi, pblock);
 			} else {
-				if (num_extents >= OUICHEFS_MAX_EXTENTS) {
-					brelse(bh_index);
-					put_block(sbi, pblock);
-					printk("ouichefs: file %s reached maximum number of extents\n", file->f_path.dentry->d_name.name);
-					return -ENOSPC;
-				}
+				brelse(bh);
+			}
+			brelse(bh_index);
+			return -EFAULT;
+		}
+
+		if (new_block) {
+			if (extent_last) {
+				last_extent->count++;
+			} else {
 				struct ouichefs_extent *extent = &extents[num_extents];
 				extent->start = pblock;
 				extent->count = 1;
@@ -325,29 +359,9 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 			inode->i_blocks++;
 			mark_inode_dirty(inode);
+
 			mark_buffer_dirty(bh_index);
 			sync_dirty_buffer(bh_index);
-
-			bh = sb_getblk(sb, pblock);
-			if (!bh) {
-				put_block(sbi, pblock);
-				brelse(bh_index);
-				return -EIO;
-			}
-			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
-			set_buffer_uptodate(bh);
-		} else {
-			bh = sb_bread(sb, pblock);
-			if (!bh) {
-				brelse(bh_index);
-				return -EIO;
-			}
-		}
-
-		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
-			brelse(bh);
-			brelse(bh_index);
-			return -EFAULT;
 		}
 
 		mark_buffer_dirty(bh);
