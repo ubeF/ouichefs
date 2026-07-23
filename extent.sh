@@ -190,3 +190,38 @@ else
     echo "Did not return correct block count"
     exit 1
 fi
+
+cd mnt
+
+rm *
+
+sync
+
+echo ""
+echo "====================================================="
+echo "  Test Validate Fewer Extents With Block Allocator"
+echo "====================================================="
+
+dd if=/dev/zero of=test1.txt bs=4096 count=2 status=none
+dd if=/dev/zero of=test2.txt bs=4096 count=2 status=none
+
+rm test1.txt
+
+dd if=/dev/zero of=test3.txt bs=4096 count=4 status=none
+
+dmesg -C
+
+if ! /tmp/get_extents_ioctl "test3"; then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "1 extent(s)"; then
+    echo "PASS"
+else
+    echo "Wrong extents number received"
+    exit 1
+fi
+
+
+
