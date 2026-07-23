@@ -202,12 +202,12 @@ echo "====================================================="
 echo "  Test Validate Fewer Extents With Block Allocator"
 echo "====================================================="
 
-dd if=/dev/zero of=test1.txt bs=4096 count=2 status=none
-dd if=/dev/zero of=test2.txt bs=4096 count=2 status=none
+dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none
+dd if=/dev/zero of=test2.txt bs=32768 count=1 status=none
 
 rm test1.txt
 
-dd if=/dev/zero of=test3.txt bs=16384 count=1 status=none
+dd if=/dev/zero of=test3.txt bs=65536 count=1 status=none
 
 dmesg -C
 
@@ -230,13 +230,11 @@ echo "===================================="
 
 rm *
 
-touch test1.txt
-touch test2.txt
-
 i=1
 while [ $i -le 5 ]; do
-    echo $i >> test1.txt
-    echo $i >> test2.txt
+    bits=$((bits = 4096 * i))
+    dd if=/dev/zero of=test1.txt bs="$bits" count=1 status=none
+    dd if=/dev/zero of=test2.txt bs="$bits" count=1 status=none
     ((i++))
 done
 
