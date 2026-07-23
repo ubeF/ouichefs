@@ -137,10 +137,12 @@ if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
     exit 1
 fi
 
-if dmesg | grep -q "count=1"; then
+if dmesg | grep -q "1 extent(s)" &&
+   dmesg | grep -q "count=1"; then
     echo "PASS"
 else
-    echo "Wrong block count received"
+    echo "Wrong truncate extent metadata"
+    dmesg
     exit 1
 fi
 
@@ -175,6 +177,7 @@ if cmp ./bigfile ./mnt/bigfile; then
 else
     echo "5MB file not correct written/read"
     echo "FAIL"
+    exit 1
 fi
 
 dmesg -C
@@ -202,12 +205,19 @@ echo "====================================================="
 echo "  Test Validate Fewer Extents With Block Allocator"
 echo "====================================================="
 
-dd if=/dev/zero of=test1.txt bs=4096 count=2 status=none
-dd if=/dev/zero of=test2.txt bs=4096 count=2 status=none
+if ! dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none; then
+    exit 1
+fi
+
+if ! dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none; then
+    exit 1
+fi
 
 rm test1.txt
 
-dd if=/dev/zero of=test3.txt bs=16384 count=1 status=none
+if ! dd if=/dev/zero of=test3.txt bs=65536 count=1 status=none; then
+    exit 1
+fi
 
 dmesg -C
 
@@ -223,5 +233,75 @@ else
     exit 1
 fi
 
+echo ""
+echo "===================================="
+echo "  Test Validate Block Reservation"
+echo "===================================="
 
+rm *
 
+exec 3>test1.txt
+exec 4>test2.txt
+
+for i in 1 2 3 4 5; do
+    printf '%4096s' '' >&3 || exit 1
+    printf '%4096s' '' >&4 || exit 1
+done
+
+exec 3>&-
+exec 4>&-
+
+sync
+
+dmesg -C
+
+if ! /tmp/get_extents_ioctl "test1.txt"; then
+    echo "Failed inspect test1.txt!"
+    exit 1
+fi
+
+if ! /tmp/get_extents_ioctl "test2.txt"; then
+    echo "Failed inspect test2.txt!"
+    exit 1
+fi
+
+log=$(dmesg)
+printf '%s\n' "$log"
+
+if [ "$(printf '%s\n' "$log" | grep -c "1 extent(s)")" -eq 2 ] &&
+   [ "$(printf '%s\n' "$log" | grep -c "count=5")" -eq 2 ]; then
+    echo "PASS"
+else
+    echo "Block reservation test failed"
+    exit 1
+fi
+
+echo ""
+echo "===================================="
+echo " Test Reservation GC"
+echo "===================================="
+
+rm -f *
+
+# Fill filesystem almost completely
+while printf '%4096s' '' >> filler; do
+    :
+done
+
+# Free a small amount of space
+truncate -s $(( $(stat -c %s filler) - 32768 )) filler
+sync
+
+# Create reservations
+exec 3>test1
+
+printf '%4096s' '' >&3
+
+dmesg -C
+
+# This write should be the first to hit ENOSPC and invoke GC
+if printf '%4096s' '' > trigger; then
+    echo PASS
+else
+    echo FAIL
+fi

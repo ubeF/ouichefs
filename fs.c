@@ -13,6 +13,9 @@
 
 #include "ouichefs.h"
 
+uint32_t reservation_size = 8;
+module_param(reservation_size, uint, 0644);
+
 /*
  * Mount a ouiche_fs partition
  */
