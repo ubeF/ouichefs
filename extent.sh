@@ -207,11 +207,11 @@ dd if=/dev/zero of=test2.txt bs=4096 count=2 status=none
 
 rm test1.txt
 
-dd if=/dev/zero of=test3.txt bs=4096 count=4 status=none
+dd if=/dev/zero of=test3.txt bs=16384 count=1 status=none
 
 dmesg -C
 
-if ! /tmp/get_extents_ioctl "test3"; then
+if ! /tmp/get_extents_ioctl "test3.txt"; then
     echo "Failed to run user program!"
     exit 1
 fi
