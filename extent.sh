@@ -175,6 +175,7 @@ if cmp ./bigfile ./mnt/bigfile; then
 else
     echo "5MB file not correct written/read"
     echo "FAIL"
+    exit 1
 fi
 
 dmesg -C
@@ -202,12 +203,19 @@ echo "====================================================="
 echo "  Test Validate Fewer Extents With Block Allocator"
 echo "====================================================="
 
-dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none
-dd if=/dev/zero of=test2.txt bs=32768 count=1 status=none
+if ! dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none; then
+    exit 1
+fi
+
+if ! dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none; then
+    exit 1
+fi
 
 rm test1.txt
 
-dd if=/dev/zero of=test3.txt bs=65536 count=1 status=none
+if ! dd if=/dev/zero of=test3.txt bs=65536 count=1 status=none; then
+    exit 1
+fi
 
 dmesg -C
 

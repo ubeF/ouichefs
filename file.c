@@ -291,8 +291,10 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	//inode_unlock(inode);
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
-	if (!bh_index)
+	if (!bh_index) {
+		pr_err("ouichefs: failed to read index block\n");
 		return -EIO;
+	}
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 	struct ouichefs_extent *extents = index->extents;
 	uint32_t num_extents = index->num_extents;
@@ -363,6 +365,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		struct buffer_head *bh = sb_bread(sb, pblock);
 		if (!bh) {
 			brelse(bh_index);
+			pr_err("ouichefs: failed to read block\n");
 			return -EIO;
 		}
 		if (copy_from_user(bh->b_data + block_offset, cursor,
