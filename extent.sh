@@ -82,6 +82,7 @@ printf "%s" '
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include "extent_ioctl.h"
 
@@ -89,11 +90,15 @@ int main(int argc, char **argv)
 {
     int fd = open(argv[1], O_RDONLY);
 
-    if (fd < 0)
+    if (fd < 0) {
+        printf("failed to open file!\n");
         return 1;
+    }
 
-    if (ioctl(fd, OUICHEFS_IOC_GET_EXTENTS) < 0)
+    if (ioctl(fd, OUICHEFS_IOC_GET_EXTENTS) < 0) {
+        printf("ioctl failed!\n");
         return 1;
+    }
 
     close(fd);
     return 0;
@@ -185,3 +190,38 @@ else
     echo "Did not return correct block count"
     exit 1
 fi
+
+cd mnt
+
+rm *
+
+sync
+
+echo ""
+echo "====================================================="
+echo "  Test Validate Fewer Extents With Block Allocator"
+echo "====================================================="
+
+dd if=/dev/zero of=test1.txt bs=4096 count=2 status=none
+dd if=/dev/zero of=test2.txt bs=4096 count=2 status=none
+
+rm test1.txt
+
+dd if=/dev/zero of=test3.txt bs=16384 count=1 status=none
+
+dmesg -C
+
+if ! /tmp/get_extents_ioctl "test3.txt"; then
+    echo "Failed to run user program!"
+    exit 1
+fi
+
+if dmesg | grep -q "1 extent(s)"; then
+    echo "PASS"
+else
+    echo "Wrong extents number received"
+    exit 1
+fi
+
+
+
