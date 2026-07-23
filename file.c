@@ -286,7 +286,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	uint32_t allocated_start;
 	uint32_t allocated_count;
 	if (ci->i_reserved_count == 0) {
-		allocated_count = ouichefs_alloc_contiguous(sb, max(requested_blocks, 8), &allocated_start);
+		allocated_count = ouichefs_alloc_contiguous(sb, max(requested_blocks, reservation_size), &allocated_start);
 		if (!allocated_count) {
 			brelse(bh_index);
 			return -ENOSPC;
