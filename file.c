@@ -213,6 +213,21 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 	return 0;
 }
 
+int ouichefs_release(struct inode *inode, struct file *file) {
+	struct super_block *sb = inode->i_sb;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+
+	for (uint32_t i=0; i < ci->i_reserved_count; i++) {
+		put_block(sbi, ci->i_reserved_start + i);
+	}
+
+	ci->i_reserved_count = 0;
+	ci->i_reserved_start = 0;
+
+	return 0;
+}
+
 ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	struct inode *inode = file->f_inode;

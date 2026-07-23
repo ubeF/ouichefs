@@ -108,6 +108,13 @@ static void ouichefs_evict_inode(struct inode *inode)
 
 	truncate_inode_pages_final(&inode->i_data);
 
+	for (uint32_t i=0; i < inode_info->i_reserved_count; i++) {
+		put_block(sbi, inode_info->i_reserved_start + i);
+	}
+
+	inode_info->i_reserved_count = 0;
+	inode_info->i_reserved_start = 0;
+
 	/*
 	 * Cleanup pointed blocks if file/directory is not linked anymore.
 	 * If we fail to read the index block, cleanup inode anyway and
