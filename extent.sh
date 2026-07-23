@@ -233,11 +233,11 @@ rm *
 touch test1.txt
 touch test2.txt
 
-count=1
-while [ $count -le 5 ]; do
-    echo "$(count)" >> test1.txt
-    echo "$(count)" >> test2.txt
-    ((count++))
+i=1
+while [ $i -le 5 ]; do
+    echo $i >> test1.txt
+    echo $i >> test2.txt
+    ((i++))
 done
 
 dmesg -C
