@@ -18,6 +18,49 @@
 #include "extent_ioctl.h"
 
 
+static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
+                                          uint32_t requested,
+                                          uint32_t *block)
+{
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	unsigned long *freemap = sbi->bfree_bitmap;
+	uint32_t nr_blocks = sbi->nr_blocks;
+	uint32_t longest_run_start = 0;
+	uint32_t longest_run_count = 0;
+	// Find longest run; return early when request-sized run is found
+	for (uint32_t end, start = 0; start < nr_blocks; start = end) {
+		start = find_next_bit(freemap, nr_blocks, start);
+		if (start == nr_blocks)
+			break;
+		end = find_next_zero_bit(freemap, nr_blocks, start);
+
+		uint32_t diff = min(requested, end - start);
+
+		if (diff > longest_run_count) {
+			if (longest_run_count > 0) {
+				bitmap_set(freemap, longest_run_start, longest_run_count); // remove previous "reservation"
+				sbi->nr_free_blocks += longest_run_count; 
+			}
+			longest_run_start = start;
+			longest_run_count = diff;
+			bitmap_clear(freemap, longest_run_start, longest_run_count);
+			sbi->nr_free_blocks -= longest_run_count; 
+		}
+
+		if (diff == requested)
+			break;
+	}
+
+	if (longest_run_count > 0) {
+		*block = longest_run_start;
+		printk("ouichefs: allocated blocks %d to %d\n", longest_run_start, longest_run_start + longest_run_count - 1);
+		return longest_run_count;
+	} 
+
+	printk("ouichefs: unable to allocate blocks\n");
+	return 0;
+}
+
 /*
  * Map the buffer_head passed in argument with the iblock-th block of the file
  * represented by inode. If the requested block is not allocated and create is
@@ -245,19 +288,17 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	const char *buf_end = buf + count;
 
 	for (int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
-		sector_t iblock = *pos / sb->s_blocksize;
+		uint32_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
 		int block_space = sb->s_blocksize - block_offset;
 		int buf_space = buf_end - cursor;
 		to_write = min(buf_space, block_space);
 
-		sector_t pblock = ouichefs_extent_get_block(extents, iblock);
+		uint32_t pblock = ouichefs_extent_get_block(extents, iblock);
 		struct buffer_head *bh;
 		if (pblock == 0) {
-			pblock = get_free_block(sbi);
-			if (!pblock) {
+			if (!ouichefs_alloc_contiguous(sb, 1, &pblock)) {
 				brelse(bh_index);
-				printk("ouichefs: ran out of free blocks\n");
 				return -ENOSPC;
 			}
 
@@ -332,8 +373,10 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 		struct buffer_head *bh_index;
 
 		bh_index = sb_bread(sb, inode_info->index_block);
-		if (!bh_index)
+		if (!bh_index) {
+			printk("ouichefs: unable to acces index block\n");
 			return -EIO;
+		}
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
 		printk("ouichefs: extents for inode %lu: %d extent(s)\n", inode->i_ino, le32_to_cpu(index->num_extents));
@@ -347,6 +390,7 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 		}
 		brelse(bh_index);
 	} else {
+		printk("ouichefs: unknown ioctl\n");
 		return -ENOTTY;
 	}
 	return 0;

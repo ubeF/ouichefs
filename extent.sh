@@ -82,6 +82,7 @@ printf "%s" '
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include "extent_ioctl.h"
 
@@ -89,11 +90,15 @@ int main(int argc, char **argv)
 {
     int fd = open(argv[1], O_RDONLY);
 
-    if (fd < 0)
+    if (fd < 0) {
+        printf("failed to open file!\n");
         return 1;
+    }
 
-    if (ioctl(fd, OUICHEFS_IOC_GET_EXTENTS) < 0)
+    if (ioctl(fd, OUICHEFS_IOC_GET_EXTENTS) < 0) {
+        printf("ioctl failed!\n");
         return 1;
+    }
 
     close(fd);
     return 0;
