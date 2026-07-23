@@ -53,11 +53,10 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
 
 	if (longest_run_count > 0) {
 		*block = longest_run_start;
-		printk("ouichefs: allocated blocks %d to %d\n", longest_run_start, longest_run_start + longest_run_count - 1);
 		return longest_run_count;
 	} 
 
-	printk("ouichefs: unable to allocate blocks\n");
+	pr_err("ouichefs: unable to allocate blocks\n");
 	return 0;
 }
 
@@ -282,10 +281,47 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 	struct ouichefs_extent *extents = index->extents;
 	uint32_t num_extents = index->num_extents;
+	uint32_t requested_blocks = (*pos + count - inode->i_size + (sb->s_blocksize - 1)) >> sb->s_blocksize_bits;
+	uint32_t allocated_start;
+	uint32_t allocated_count = ouichefs_alloc_contiguous(sb, requested_blocks, &allocated_start);
+	if (!allocated_count) {
+		brelse(bh_index);
+		return -ENOSPC;
+	}
+	struct ouichefs_extent *last_extent = NULL;
+	if (num_extents > 0)
+		last_extent = &extents[num_extents - 1];
+
+	bool extent_last = last_extent && last_extent->start + last_extent->count == allocated_start;
+
+	if (!extent_last && num_extents >= OUICHEFS_MAX_EXTENTS) {
+		for (int i = 0; i < allocated_count; i++) {
+			put_block(sbi, allocated_start + i);
+		}
+		brelse(bh_index);
+		pr_err("ouichefs: file %s reached maximum number of extents\n",
+		       file->f_path.dentry->d_name.name);
+		return -ENOSPC;
+	}
+
+	if (extent_last) {
+		last_extent->count += allocated_count;
+	} else {
+		struct ouichefs_extent *extent = &extents[num_extents];
+		extent->start = allocated_start;
+		extent->count = allocated_count;
+		index->num_extents++;
+	}
+
+	inode->i_blocks += allocated_count;
+	mark_inode_dirty(inode);
+
+	mark_buffer_dirty(bh_index);
+	sync_dirty_buffer(bh_index);
 
 	const char __user *cursor = buf;
 	const char __user *buf_end = buf + count;
-
+	
 	for (int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
 		uint32_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
@@ -294,74 +330,18 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		to_write = min(buf_space, block_space);
 
 		uint32_t pblock = ouichefs_extent_get_block(extents, iblock);
-		struct buffer_head *bh;
-		bool new_block = false;
-		bool extent_last = false;
-		struct ouichefs_extent *last_extent = NULL;
-
-		if (pblock == 0) {
-			if (!ouichefs_alloc_contiguous(sb, 1, &pblock)) {
-				brelse(bh_index);
-				return -ENOSPC;
-			}
-
-			if (num_extents > 0)
-				last_extent = &extents[num_extents - 1];
-
-			extent_last = last_extent && last_extent->start + last_extent->count == pblock;
-
-			if (!extent_last && num_extents >= OUICHEFS_MAX_EXTENTS) {
-				put_block(sbi, pblock);
-				brelse(bh_index);
-				printk("ouichefs: file %s reached maximum number of extents\n", file->f_path.dentry->d_name.name);
-				return -ENOSPC;
-			}
-
-			bh = sb_getblk(sb, pblock);
-			if (!bh) {
-				put_block(sbi, pblock);
-				brelse(bh_index);
-				return -EIO;
-			}
-			new_block = true;
-			memset(bh->b_data, 0, sb->s_blocksize); // New blocks have to be zeroed
-			set_buffer_uptodate(bh);
-
-					} else {
-			bh = sb_bread(sb, pblock);
-			if (!bh) {
-				brelse(bh_index);
-				return -EIO;
-			}
+		if (!pblock)
+			break;
+		struct buffer_head *bh = sb_bread(sb, pblock);
+		if (!bh) {
+			brelse(bh_index);
+			return -EIO;
 		}
-
-		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
-			if (new_block) {
-				bforget(bh);
-				put_block(sbi, pblock);
-			} else {
-				brelse(bh);
-			}
+		if (copy_from_user(bh->b_data + block_offset, cursor,
+				   to_write)) {
+			brelse(bh);
 			brelse(bh_index);
 			return -EFAULT;
-		}
-
-		if (new_block) {
-			if (extent_last) {
-				last_extent->count++;
-			} else {
-				struct ouichefs_extent *extent = &extents[num_extents];
-				extent->start = pblock;
-				extent->count = 1;
-				num_extents++;
-				index->num_extents = num_extents;
-			}
-
-			inode->i_blocks++;
-			mark_inode_dirty(inode);
-
-			mark_buffer_dirty(bh_index);
-			sync_dirty_buffer(bh_index);
 		}
 
 		mark_buffer_dirty(bh);
