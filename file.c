@@ -299,10 +299,11 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	struct ouichefs_extent *extents = index->extents;
 	uint32_t num_extents = index->num_extents;
 
-	uint32_t required_blocks = (*pos + count + (sb->s_blocksize - 1)) >> sb->s_blocksize_bits;
-	uint32_t requested_blocks = required_blocks - inode->i_blocks;
+	uint64_t write_end = *pos + count;
+	uint32_t required_blocks = (write_end + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
-	if (requested_blocks > 0) {
+	if (required_blocks > inode->i_blocks) {
+		uint32_t requested_blocks = required_blocks - inode->i_blocks;
 		uint32_t allocated_start;
 		uint32_t allocated_count;
 		if (ci->i_reserved_count == 0) {
@@ -317,6 +318,9 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 		allocated_start = ci->i_reserved_start;
 		allocated_count = min(ci->i_reserved_count, requested_blocks);
+
+		ci->i_reserved_start = allocated_start + allocated_count;
+		ci->i_reserved_count = ci->i_reserved_count - allocated_count;
 
 		struct ouichefs_extent *last_extent = NULL;
 		if (num_extents > 0)
@@ -342,9 +346,6 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			extent->count = allocated_count;
 			index->num_extents++;
 		}
-
-		ci->i_reserved_start = allocated_start + allocated_count;
-		ci->i_reserved_count = ci->i_reserved_count - allocated_count;
 
 		inode->i_blocks += allocated_count;
 		mark_inode_dirty(inode);
@@ -441,6 +442,7 @@ const struct file_operations ouichefs_file_ops = {
 	.write_iter = generic_file_write_iter,
 	.fsync = generic_file_fsync,
 	.unlocked_ioctl = extents_ioctl,
+	.release = ouichefs_release,
 };
 
 int ouichefs_truncate(struct inode *inode)
