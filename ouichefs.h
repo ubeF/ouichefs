@@ -56,6 +56,8 @@ struct ouichefs_inode {
 };
 
 struct ouichefs_inode_info {
+	uint32_t i_reserved_start; /* first pre-reserved block          */
+	uint32_t i_reserved_count; /* number of pre-reserved blocks left */
 	uint32_t index_block;
 	struct inode vfs_inode;
 };
