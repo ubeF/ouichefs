@@ -44,6 +44,9 @@ struct inode *ouichefs_iget(struct super_block *sb, unsigned long ino)
 		return inode;
 
 	ci = OUICHEFS_INODE(inode);
+	/* Init reservations */
+	ci->i_reserved_start = 0;
+	ci->i_reserved_count = 0;
 	/* Read inode from disk and initialize */
 	bh = sb_bread(sb, inode_block);
 	if (!bh) {

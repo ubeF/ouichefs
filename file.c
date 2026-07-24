@@ -17,10 +17,7 @@
 #include "bitmap.h"
 #include "extent_ioctl.h"
 
-
-static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
-                                          uint32_t requested,
-                                          uint32_t *block)
+static uint32_t ouichefs_alloc_contiguous(struct super_block *sb, uint32_t requested, uint32_t *block)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	unsigned long *freemap = sbi->bfree_bitmap;
@@ -39,12 +36,12 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
 		if (diff > longest_run_count) {
 			if (longest_run_count > 0) {
 				bitmap_set(freemap, longest_run_start, longest_run_count); // remove previous "reservation"
-				sbi->nr_free_blocks += longest_run_count; 
+				sbi->nr_free_blocks += longest_run_count;
 			}
 			longest_run_start = start;
 			longest_run_count = diff;
 			bitmap_clear(freemap, longest_run_start, longest_run_count);
-			sbi->nr_free_blocks -= longest_run_count; 
+			sbi->nr_free_blocks -= longest_run_count;
 		}
 
 		if (diff == requested)
@@ -54,7 +51,7 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb,
 	if (longest_run_count > 0) {
 		*block = longest_run_start;
 		return longest_run_count;
-	} 
+	}
 
 	pr_err("ouichefs: unable to allocate blocks\n");
 	return 0;
@@ -201,7 +198,7 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 	for (uint32_t i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
 		uint32_t start = extents[i].start;
 		uint32_t count = extents[i].count;
-		
+
 		if (count == 0)
 			return 0;
 		if (logical_block < count)
@@ -213,12 +210,13 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 	return 0;
 }
 
-int ouichefs_release(struct inode *inode, struct file *file) {
+int ouichefs_release(struct inode *inode, struct file *file)
+{
 	struct super_block *sb = inode->i_sb;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	for (uint32_t i=0; i < ci->i_reserved_count; i++) {
+	for (uint32_t i = 0; i < ci->i_reserved_count; i++) {
 		put_block(sbi, ci->i_reserved_start + i);
 	}
 
@@ -282,28 +280,32 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 {
 	struct inode *inode = file->f_inode;
 	struct super_block *sb = inode->i_sb;
-	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	// struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
-	//inode_lock(inode);
 	if (file->f_flags & O_APPEND)
 		*pos = inode->i_size;
-	//inode_unlock(inode);
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index) {
 		pr_err("ouichefs: failed to read index block\n");
 		return -EIO;
 	}
+
+	/* Allocation metadata */
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 	struct ouichefs_extent *extents = index->extents;
 	uint32_t num_extents = index->num_extents;
-
+	uint32_t mapped_blocks = 0;
+	for (uint32_t i = 0; i < num_extents; i++) {
+		mapped_blocks += extents[i].count;
+	}
 	uint64_t write_end = *pos + count;
 	uint32_t required_blocks = (write_end + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
-	if (required_blocks > inode->i_blocks) {
-		uint32_t requested_blocks = required_blocks - inode->i_blocks;
+	/* Allocation block */
+	if (required_blocks > mapped_blocks) {
+		uint32_t requested_blocks = required_blocks - mapped_blocks;
 		uint32_t allocated_start;
 		uint32_t allocated_count;
 		if (ci->i_reserved_count == 0) {
@@ -314,13 +316,10 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			}
 			ci->i_reserved_count = allocated_count;
 			ci->i_reserved_start = allocated_start;
-		} 
+		}
 
 		allocated_start = ci->i_reserved_start;
 		allocated_count = min(ci->i_reserved_count, requested_blocks);
-
-		ci->i_reserved_start = allocated_start + allocated_count;
-		ci->i_reserved_count = ci->i_reserved_count - allocated_count;
 
 		struct ouichefs_extent *last_extent = NULL;
 		if (num_extents > 0)
@@ -329,12 +328,9 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		bool extent_last = last_extent && last_extent->start + last_extent->count == allocated_start;
 
 		if (!extent_last && num_extents >= OUICHEFS_MAX_EXTENTS) {
-			for (int i = 0; i < allocated_count; i++) {
-				put_block(sbi, allocated_start + i);
-			}
 			brelse(bh_index);
 			pr_err("ouichefs: file %s reached maximum number of extents\n",
-				file->f_path.dentry->d_name.name);
+			       file->f_path.dentry->d_name.name);
 			return -ENOSPC;
 		}
 
@@ -342,21 +338,28 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			last_extent->count += allocated_count;
 		} else {
 			struct ouichefs_extent *extent = &extents[num_extents];
+
 			extent->start = allocated_start;
 			extent->count = allocated_count;
-			index->num_extents++;
+
+			num_extents++;
+			index->num_extents = num_extents;
 		}
 
-		inode->i_blocks += allocated_count;
-		mark_inode_dirty(inode);
+		ci->i_reserved_start += allocated_count;
+		ci->i_reserved_count -= allocated_count;
 
+		inode->i_blocks += allocated_count;
+
+		mark_inode_dirty(inode);
 		mark_buffer_dirty(bh_index);
 		sync_dirty_buffer(bh_index);
 	}
 
+	/* Write block */
 	const char __user *cursor = buf;
 	const char __user *buf_end = buf + count;
-	
+
 	for (int to_write; cursor < buf_end; *pos += to_write, cursor += to_write) {
 		uint32_t iblock = *pos / sb->s_blocksize;
 		int block_offset = *pos % sb->s_blocksize;
@@ -365,16 +368,22 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		to_write = min(buf_space, block_space);
 
 		uint32_t pblock = ouichefs_extent_get_block(extents, iblock);
-		if (!pblock)
-			break;
+
+		// Edit this check when supporting holes!!!
+		if (!pblock) {
+			pr_err("ouichefs_write: no mapping for iblock=%u\n",
+			       iblock);
+			brelse(bh_index);
+			return -EIO;
+		}
 		struct buffer_head *bh = sb_bread(sb, pblock);
 		if (!bh) {
 			brelse(bh_index);
 			pr_err("ouichefs: failed to read block\n");
 			return -EIO;
 		}
-		if (copy_from_user(bh->b_data + block_offset, cursor,
-				   to_write)) {
+
+		if (copy_from_user(bh->b_data + block_offset, cursor, to_write)) {
 			brelse(bh);
 			brelse(bh_index);
 			return -EFAULT;
@@ -466,58 +475,56 @@ int ouichefs_truncate(struct inode *inode)
 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh->b_data;
 
-	size_t extent_num;
 	required_num_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
-	/* find last required extent */
-	for (extent_num = 0; extent_num < OUICHEFS_MAX_EXTENTS; extent_num++) {
-		size_t start = index->extents[extent_num].start;
-		size_t count = index->extents[extent_num].count;
-		if (!start || !count) {
-			printk("ouichefs: file has holes! we currently don't handle those!\n");
+	uint32_t remaining_blocks = required_num_blocks;
+	uint32_t old_num_extents = index->num_extents;
+	uint32_t new_num_extents = 0;
+
+	/*
+	 * Go through all extents and only keep the needed extents.
+	 * If keep is 0 remove extent.
+	 * If at the end remaining_blocks is > 0 throw error since truncate wanted to increase file size.
+	 */
+	for (uint32_t i = 0; i < old_num_extents; i++) {
+		struct ouichefs_extent *extent = &index->extents[i];
+		uint32_t keep;
+
+		if (!extent->start || !extent->count) {
+			pr_err("ouichefs: file has holes! we don't handle those yet!!\n");
 			ret = -EINVAL;
 			goto out_brelse;
 		}
-		if (required_num_blocks < count)
-			break;
-		required_num_blocks -= count;
+
+		/* Kept blocks of extent are either all of them or number of rest of needed blocks */
+		keep = min(remaining_blocks, extent->count);
+
+		for (uint32_t j = keep; j < extent->count; j++) {
+			put_block(sbi, extent->start + j);
+			inode->i_blocks--;
+		}
+
+		/* Update remaining_blocks or free extent if keep is zero */
+		if (keep > 0) {
+			extent->count = keep;
+			new_num_extents = i + 1;
+			remaining_blocks -= keep;
+		} else {
+			extent->start = 0;
+			extent->count = 0;
+		}
 	}
 
-	if (extent_num >= OUICHEFS_MAX_EXTENTS) {
-		printk("ouichefs: File is too big!\n");
-		ret = -ENOSPC;
+	if (remaining_blocks > 0) {
+		pr_err("ouichefs: truncate attempted to grow file\n");
+		ret = -EINVAL;
 		goto out_brelse;
 	}
 
-	/* shorten extent */
-	for (size_t i = required_num_blocks; i < index->extents[extent_num].count; i++) {
-		put_block(sbi, index->extents[extent_num].start + i);
-		--inode->i_blocks;
-	}
-	index->extents[extent_num].count = required_num_blocks;
-
-	index->num_extents = extent_num++;
-
-	// wipe remaining extents
-	for (size_t i = extent_num; i < OUICHEFS_MAX_EXTENTS; ++i) {
-		uint32_t start = index->extents[i].start;
-		uint32_t count = index->extents[i].count;
-
-		if (!start || !count)
-			break;
-
-		for (uint32_t j = 0; j < count; j++) {
-			put_block(sbi, start + j);
-			--inode->i_blocks;
-		}
-
-		index->extents[i].start = 0;
-		index->extents[i].count = 0;
-	}
+	index->num_extents = new_num_extents;
 
 	mark_buffer_dirty(bh);
 	brelse(bh);
-
 	mark_inode_dirty(inode);
 
 	return 0;

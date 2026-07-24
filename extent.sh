@@ -137,10 +137,12 @@ if ! output=$(/tmp/get_extents_ioctl "test.txt"); then
     exit 1
 fi
 
-if dmesg | grep -q "count=1"; then
+if dmesg | grep -q "1 extent(s)" &&
+   dmesg | grep -q "count=1"; then
     echo "PASS"
 else
-    echo "Wrong block count received"
+    echo "Wrong truncate extent metadata"
+    dmesg
     exit 1
 fi
 
