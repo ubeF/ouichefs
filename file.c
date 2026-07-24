@@ -306,50 +306,62 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	/* Allocation block */
 	if (required_blocks > mapped_blocks) {
 		uint32_t requested_blocks = required_blocks - mapped_blocks;
-		uint32_t allocated_start;
-		uint32_t allocated_count;
-		if (ci->i_reserved_count == 0) {
-			allocated_count = ouichefs_alloc_contiguous(sb, max(requested_blocks, reservation_size), &allocated_start);
-			if (!allocated_count) {
+		while (requested_blocks > 0) {
+			uint32_t allocated_start;
+			uint32_t allocated_count;
+			if (ci->i_reserved_count == 0) {
+				allocated_count = ouichefs_alloc_contiguous(
+					sb,
+					max(requested_blocks, reservation_size),
+					&allocated_start);
+				if (!allocated_count) {
+					brelse(bh_index);
+					return -ENOSPC;
+				}
+				ci->i_reserved_count = allocated_count;
+				ci->i_reserved_start = allocated_start;
+			}
+
+			allocated_start = ci->i_reserved_start;
+			allocated_count =
+				min(ci->i_reserved_count, requested_blocks);
+
+			struct ouichefs_extent *last_extent = NULL;
+			if (num_extents > 0)
+				last_extent = &extents[num_extents - 1];
+
+			bool extent_last =
+				last_extent &&
+				last_extent->start + last_extent->count ==
+					allocated_start;
+
+			if (!extent_last &&
+			    num_extents >= OUICHEFS_MAX_EXTENTS) {
 				brelse(bh_index);
+				pr_err("ouichefs: file %s reached maximum number of extents\n",
+				       file->f_path.dentry->d_name.name);
 				return -ENOSPC;
 			}
-			ci->i_reserved_count = allocated_count;
-			ci->i_reserved_start = allocated_start;
+
+			if (extent_last) {
+				last_extent->count += allocated_count;
+			} else {
+				struct ouichefs_extent *extent =
+					&extents[num_extents];
+
+				extent->start = allocated_start;
+				extent->count = allocated_count;
+
+				num_extents++;
+				index->num_extents = num_extents;
+			}
+
+			ci->i_reserved_start += allocated_count;
+			ci->i_reserved_count -= allocated_count;
+
+			inode->i_blocks += allocated_count;
+			requested_blocks -= allocated_count;
 		}
-
-		allocated_start = ci->i_reserved_start;
-		allocated_count = min(ci->i_reserved_count, requested_blocks);
-
-		struct ouichefs_extent *last_extent = NULL;
-		if (num_extents > 0)
-			last_extent = &extents[num_extents - 1];
-
-		bool extent_last = last_extent && last_extent->start + last_extent->count == allocated_start;
-
-		if (!extent_last && num_extents >= OUICHEFS_MAX_EXTENTS) {
-			brelse(bh_index);
-			pr_err("ouichefs: file %s reached maximum number of extents\n",
-			       file->f_path.dentry->d_name.name);
-			return -ENOSPC;
-		}
-
-		if (extent_last) {
-			last_extent->count += allocated_count;
-		} else {
-			struct ouichefs_extent *extent = &extents[num_extents];
-
-			extent->start = allocated_start;
-			extent->count = allocated_count;
-
-			num_extents++;
-			index->num_extents = num_extents;
-		}
-
-		ci->i_reserved_start += allocated_count;
-		ci->i_reserved_count -= allocated_count;
-
-		inode->i_blocks += allocated_count;
 
 		mark_inode_dirty(inode);
 		mark_buffer_dirty(bh_index);

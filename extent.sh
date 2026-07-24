@@ -240,25 +240,39 @@ echo "===================================="
 
 rm *
 
-i=1
-while [ $i -le 5 ]; do
-    bits=$((bits = 4096 * i))
-    dd if=/dev/zero of=test1.txt bs="$bits" count=1 status=none
-    dd if=/dev/zero of=test2.txt bs="$bits" count=1 status=none
-    ((i++))
+exec 3>test1.txt
+exec 4>test2.txt
+
+for i in 1 2 3 4 5; do
+    dd if=/dev/zero bs=4096 count=1 status=none >&3 || exit 1
+    dd if=/dev/zero bs=4096 count=1 status=none >&4 || exit 1
 done
+
+exec 3>&-
+exec 4>&-
+
+sync
 
 dmesg -C
 
 if ! /tmp/get_extents_ioctl "test1.txt"; then
-    echo "Failed to run user program!"
+    echo "Failed inspect test1.txt!"
     exit 1
 fi
 
-if dmesg | grep -q "1 extent(s)"; then
+if ! /tmp/get_extents_ioctl "test2.txt"; then
+    echo "Failed inspect test2.txt!"
+    exit 1
+fi
+
+log=$(dmesg)
+printf '%s\n' "$log"
+
+if [ "$(printf '%s\n' "$log" | grep -c "1 extent(s)")" -eq 2 ] &&
+   [ "$(printf '%s\n' "$log" | grep -c "count=5")" -eq 2 ]; then
     echo "PASS"
 else
-    echo "Wrong extents number received"
+    echo "Block reservation test failed"
     exit 1
 fi
 
