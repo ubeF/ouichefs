@@ -276,3 +276,34 @@ else
     exit 1
 fi
 
+echo ""
+echo "===================================="
+echo " Test Reservation GC"
+echo "===================================="
+
+rm -f *
+
+exec 3>test1
+exec 4>test2
+
+printf '%4096s' '' >&3
+printf '%4096s' '' >&4
+
+rm -f filler
+while printf '%4096s' '' >> filler; do
+    :
+done
+
+dmesg -C
+
+if printf '%4096s' '' > trigger; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+exec 3>&-
+exec 4>&-
+
+sync
