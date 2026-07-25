@@ -283,27 +283,25 @@ echo "===================================="
 
 rm -f *
 
-exec 3>test1
-exec 4>test2
-
-printf '%4096s' '' >&3
-printf '%4096s' '' >&4
-
-rm -f filler
+# Fill filesystem almost completely
 while printf '%4096s' '' >> filler; do
     :
 done
 
+# Free a small amount of space
+truncate -s $(( $(stat -c %s filler) - 32768 )) filler
+sync
+
+# Create reservations
+exec 3>test1
+
+printf '%4096s' '' >&3
+
 dmesg -C
 
+# This write should be the first to hit ENOSPC and invoke GC
 if printf '%4096s' '' > trigger; then
-    echo "PASS"
+    echo PASS
 else
-    echo "FAIL"
-    exit 1
+    echo FAIL
 fi
-
-exec 3>&-
-exec 4>&-
-
-sync
