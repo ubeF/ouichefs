@@ -283,12 +283,16 @@ void ouichefs_garbage_collector(struct super_block *sb) {
 	spin_lock(&sb->s_inode_list_lock);
 	list_for_each_entry(cur, &sb->s_inodes, i_sb_list) {
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(cur);
-		for (uint32_t i = 0; i < ci->i_reserved_count; i++) {
-			put_block(sbi, ci->i_reserved_start + i);
-		}
+		if (ci->i_reserved_count > 0) {
+			inode_lock(cur);
+			for (uint32_t i = 0; i < ci->i_reserved_count; i++) {
+				put_block(sbi, ci->i_reserved_start + i);
+			}
 
-		ci->i_reserved_count = 0;
-		ci->i_reserved_start = 0;
+			ci->i_reserved_count = 0;
+			ci->i_reserved_start = 0;
+			inode_unlock(cur);
+		}
 	}
 	spin_lock(&sb->s_inode_list_lock);
 }
