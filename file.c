@@ -53,7 +53,7 @@ static uint32_t ouichefs_alloc_contiguous(struct super_block *sb, uint32_t reque
 		return longest_run_count;
 	}
 
-	pr_err("ouichefs: unable to allocate blocks\n");
+	pr_err("unable to allocate blocks\n");
 	return 0;
 }
 
@@ -312,7 +312,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 	struct buffer_head *bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index) {
-		pr_err("ouichefs: failed to read index block\n");
+		pr_err("failed to read index block\n");
 		inode_unlock(inode);
 		return -EIO;
 	}
@@ -364,7 +364,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		if (!extent_last &&
 				num_extents >= OUICHEFS_MAX_EXTENTS) {
 			brelse(bh_index);
-			pr_err("ouichefs: file %s reached maximum number of extents\n",
+			pr_err("file %s reached maximum number of extents\n",
 							file->f_path.dentry->d_name.name);
 			inode_unlock(inode);
 			return -ENOSPC;

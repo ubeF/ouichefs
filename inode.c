@@ -161,8 +161,11 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	/* Check if inodes are available */
 	sb = dir->i_sb;
 	sbi = OUICHEFS_SB(sb);
-	if (sbi->nr_free_inodes == 0 || sbi->nr_free_blocks == 0)
-		return ERR_PTR(-ENOSPC);
+	if (sbi->nr_free_inodes == 0 || sbi->nr_free_blocks == 0) {
+		ouichefs_garbage_collector(sb);
+		if (sbi->nr_free_blocks == 0)
+			return ERR_PTR(-ENOSPC);
+	}
 
 	/* Get a new free inode */
 	ino = get_free_inode(sbi);

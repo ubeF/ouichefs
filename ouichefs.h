@@ -104,6 +104,8 @@ extern uint32_t reservation_size;
 /* superblock functions */
 int ouichefs_fill_super(struct super_block *sb, void *data, int silent);
 
+void ouichefs_garbage_collector(struct super_block *sb);
+
 /* inode functions */
 int ouichefs_init_inode_cache(void);
 void ouichefs_destroy_inode_cache(void);
