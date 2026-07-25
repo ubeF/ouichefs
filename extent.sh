@@ -244,8 +244,8 @@ exec 3>test1.txt
 exec 4>test2.txt
 
 for i in 1 2 3 4 5; do
-    dd if=/dev/zero bs=4096 count=1 status=none >&3 || exit 1
-    dd if=/dev/zero bs=4096 count=1 status=none >&4 || exit 1
+    printf '%4096s' '' >&3 || exit 1
+    printf '%4096s' '' >&4 || exit 1
 done
 
 exec 3>&-
