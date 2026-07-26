@@ -14,6 +14,7 @@
 #include "ouichefs.h"
 
 uint32_t reservation_size = 8;
+struct kobject *ouichefs_kobj;
 module_param(reservation_size, uint, 0644);
 
 /*
@@ -69,6 +70,8 @@ static int __init ouichefs_init(void)
 		goto err_inode;
 	}
 
+	ouichefs_kobj = kobject_create_and_add("ouichefs", NULL);
+
 	pr_info("module loaded\n");
 	return 0;
 
@@ -87,6 +90,8 @@ static void __exit ouichefs_exit(void)
 		pr_err("unregister_filesystem() failed\n");
 
 	ouichefs_destroy_inode_cache();
+
+	kobject_put(ouichefs_kobj);
 
 	pr_info("module unloaded\n");
 }

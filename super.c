@@ -12,6 +12,7 @@
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
 #include <linux/statfs.h>
+#include <linux/blkdev.h>
 
 #include "ouichefs.h"
 #include "bitmap.h"
@@ -298,6 +299,85 @@ static struct super_operations ouichefs_super_ops = {
 	.statfs = ouichefs_statfs,
 };
 
+/*static void ouichefs_kobj_release(struct kobject *kobj)
+{
+}
+
+static ssize_t free_blocks_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	struct ouichefs_sb_info *sbi = container_of(kobj, struct ouichefs_sb_info, kobj);
+    return snprintf(buf, PAGE_SIZE, "Free blocks: %u\n", sbi->nr_free_blocks);
+}
+
+static const struct sysfs_ops sys_ops = {
+	.show = kobj_attr_show,
+	.store = NULL,
+};
+
+static struct kobj_type ouichefs_ktype = {
+	.release = ouichefs_kobj_release,
+	.sysfs_ops = &sys_ops,
+};
+
+const struct kobj_attribute free_blocks_attribute = __ATTR(free_blocks, 0400, free_blocks_show, NULL);
+
+static int create_sysfs_files(struct kobject *parent)
+{
+	int ret;
+	ret = sysfs_create_file(parent, &free_blocks_attribute.attr);
+	if (ret)
+		return -ENOMEM;
+	return 0;
+}*/
+
+static ssize_t free_blocks_show(struct ouichefs_sb_info *sbi, char *buf)
+{
+    return snprintf(buf, PAGE_SIZE, "Free blocks: %u\n", sbi->nr_free_blocks);
+}
+
+struct ouichefs_sysfs_entry {
+	struct attribute attr;
+	ssize_t (*show)(struct ouichefs_sb_info *, char *);
+	ssize_t (*store)(struct ouichefs_sb_info *, const char *, size_t);
+};
+
+static struct ouichefs_sysfs_entry free_blocks_attribute =
+	__ATTR(free_blocks, 0400, free_blocks_show, NULL);
+
+static struct attribute *ouichefs_sys_attrs[] = {
+	&free_blocks_attribute.attr,
+	NULL,	/* need to NULL terminate the list of attributes */
+};
+ATTRIBUTE_GROUPS(ouichefs_sys);
+
+static void ouichefs_sys_release(struct kobject *kobj)
+{
+}
+
+static ssize_t ouichefs_type_show(struct kobject *kobj, struct attribute *attr,
+			     char *buf)
+{
+	struct ouichefs_sb_info *sbi = to_sbi(kobj);
+	struct ouichefs_sysfs_entry *entry;
+
+	entry = container_of(attr, struct ouichefs_sysfs_entry, attr);
+
+	if (!entry->show)
+		return -EIO;
+
+	return entry->show(sbi, buf);
+}
+
+static const struct sysfs_ops ouichefs_sysfs_ops = {
+	.show = ouichefs_type_show,
+};
+
+static struct kobj_type ouichefs_attr_type = {
+	.release	= ouichefs_sys_release,
+	.sysfs_ops	= &ouichefs_sysfs_ops,
+	.default_groups	= ouichefs_sys_groups,
+};
+
 /* Fill the struct superblock from partition superblock */
 int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 {
@@ -340,6 +420,11 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->nr_bfree_blocks = le32_to_cpu(csb->nr_bfree_blocks);
 	sbi->nr_free_inodes = le32_to_cpu(csb->nr_free_inodes);
 	sbi->nr_free_blocks = le32_to_cpu(csb->nr_free_blocks);
+	ret = kobject_init_and_add(&sbi->kobj, &ouichefs_attr_type, ouichefs_kobj, bh->b_bdev->bd_disk->disk_name);
+	if (ret) {
+		kobject_put(&sbi->kobj);
+		goto free_sbi;
+	}
 	sb->s_fs_info = sbi;
 
 	brelse(bh);
