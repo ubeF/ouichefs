@@ -85,11 +85,13 @@ struct ouichefs_sb_info {
 
 	uint32_t nr_free_inodes; /* Number of free inodes */
 	uint32_t nr_free_blocks; /* Number of free blocks */
-
+	
 	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
 
 	struct ouichefs_sysfs *o_sys;
+
+	uint32_t nr_gc_runs;
 };
 
 struct ouichefs_extent {

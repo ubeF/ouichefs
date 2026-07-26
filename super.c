@@ -303,7 +303,174 @@ static struct super_operations ouichefs_super_ops = {
 static ssize_t free_blocks_show(struct super_block *sb, char *buf)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-    return snprintf(buf, PAGE_SIZE, "Free blocks: %u\n", sbi->nr_free_blocks);
+    return snprintf(buf, PAGE_SIZE, "%u\n", sbi->nr_free_blocks);
+}
+
+static ssize_t commited_blocks_show(struct super_block *sb, char *buf)
+{
+	struct inode *inode;
+	struct ouichefs_inode_info *ci;
+	struct buffer_head *bh_index;
+	struct ouichefs_file_index_block *index;
+	struct ouichefs_extent *extents;
+	uint32_t num_extents;
+
+	uint32_t committed_blocks = 0;
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		ci = OUICHEFS_INODE(inode);
+		bh_index = sb_bread(sb, ci->index_block);
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		extents = index->extents;
+		num_extents = index->num_extents;
+		for (uint32_t i = 0; i < num_extents; i++) {
+			if (extents[i].start)
+				committed_blocks += extents[i].count;
+		}
+		brelse(bh_index);
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+    return snprintf(buf, PAGE_SIZE, "%u\n", committed_blocks);
+}
+
+static ssize_t reserved_blocks_show(struct super_block *sb, char *buf)
+{
+	struct inode *inode;
+	struct ouichefs_inode_info *ci;
+
+	uint32_t reserved_blocks = 0;
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		ci = OUICHEFS_INODE(inode);
+		reserved_blocks += ci->i_reserved_count;
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+    return snprintf(buf, PAGE_SIZE, "%u\n", reserved_blocks);
+}
+
+static ssize_t files_show(struct super_block *sb, char *buf)
+{
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+    return snprintf(buf, PAGE_SIZE, "%u\n", sbi->nr_inodes);
+}
+
+static ssize_t total_extents_show(struct super_block *sb, char *buf)
+{
+	struct inode *inode;
+	struct ouichefs_inode_info *ci;
+	struct buffer_head *bh_index;
+	struct ouichefs_file_index_block *index;
+	struct ouichefs_extent *extents;
+
+	uint32_t total_extents = 0;
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		ci = OUICHEFS_INODE(inode);
+		bh_index = sb_bread(sb, ci->index_block);
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		extents = index->extents;
+		total_extents += index->num_extents;
+		brelse(bh_index);
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+    return snprintf(buf, PAGE_SIZE, "%u\n", total_extents);
+}
+
+static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
+{
+	struct inode *inode;
+	struct ouichefs_inode_info *ci;
+	struct buffer_head *bh_index;
+	struct ouichefs_file_index_block *index;
+	struct ouichefs_extent *extents;
+
+	uint32_t total_extents = 0;
+	uint32_t total_blocks = 0;
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		ci = OUICHEFS_INODE(inode);
+		bh_index = sb_bread(sb, ci->index_block);
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		extents = index->extents;
+		total_extents += index->num_extents;
+		for (uint32_t i = 0; i < index->num_extents; i++) {
+			total_blocks += extents[i].count;
+		}
+		brelse(bh_index);
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+	uint32_t avg_extent_size = (total_blocks / total_extents) * 100;
+
+    return snprintf(buf, PAGE_SIZE, "%u\n", avg_extent_size);
+}
+
+static ssize_t max_file_size_show(struct super_block *sb, char *buf)
+{
+	struct inode *inode;
+
+	uint32_t largest_file_size = 0;
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		if (inode->i_size > largest_file_size)
+			largest_file_size = inode->i_size;
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+    return snprintf(buf, PAGE_SIZE, "%u\n", largest_file_size);
+}
+
+static ssize_t fragmentation_show(struct super_block *sb, char *buf)
+{
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	struct inode *inode;
+	struct ouichefs_inode_info *ci;
+	struct buffer_head *bh_index;
+	struct ouichefs_file_index_block *index;
+	struct ouichefs_extent *extents;
+
+	uint32_t total_extents = 0;
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		ci = OUICHEFS_INODE(inode);
+		bh_index = sb_bread(sb, ci->index_block);
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		extents = index->extents;
+		total_extents += index->num_extents;
+		brelse(bh_index);
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+	uint32_t fragmentation = (total_extents / sbi->nr_inodes) * 100;
+
+    return snprintf(buf, PAGE_SIZE, "%u\n", fragmentation);
+}
+
+static ssize_t reservation_size_show(struct super_block *sb, char *buf)
+{
+    return snprintf(buf, PAGE_SIZE, "%u\n", reservation_size);
+}
+
+static ssize_t gc_runs_show(struct super_block *sb, char *buf)
+{
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+    return snprintf(buf, PAGE_SIZE, "%u\n", sbi->nr_gc_runs);
+}
+
+static ssize_t total_blocks_show(struct super_block *sb, char *buf)
+{
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	uint32_t total_blocks = sbi->nr_blocks - sbi->nr_istore_blocks - sbi->nr_ifree_blocks - sbi->nr_bfree_blocks - sb->s_blocksize;
+    return snprintf(buf, PAGE_SIZE, "%u\n", total_blocks);
 }
 
 struct ouichefs_sysfs_entry {
@@ -315,8 +482,48 @@ struct ouichefs_sysfs_entry {
 static struct ouichefs_sysfs_entry free_blocks_attribute =
 	__ATTR(free_blocks, 0400, free_blocks_show, NULL);
 
+static struct ouichefs_sysfs_entry committed_blocks_attribute =
+	__ATTR(committed_blocks, 0400, commited_blocks_show, NULL);
+
+static struct ouichefs_sysfs_entry reserved_blocks_attribute =
+	__ATTR(reserved_blocks, 0400, reserved_blocks_show, NULL);
+
+static struct ouichefs_sysfs_entry files_attribute =
+	__ATTR(files, 0400, files_show, NULL);
+
+static struct ouichefs_sysfs_entry total_extents_attribute =
+	__ATTR(total_extents, 0400, total_extents_show, NULL);
+
+static struct ouichefs_sysfs_entry avg_extent_size_attribute =
+	__ATTR(avg_extent_size, 0400, avg_extent_size_show, NULL);
+
+static struct ouichefs_sysfs_entry max_file_size_attribute =
+	__ATTR(max_file_size, 0400, max_file_size_show, NULL);
+
+static struct ouichefs_sysfs_entry fragmentation_attribute =
+	__ATTR(fragmentation, 0400, fragmentation_show, NULL);
+
+static struct ouichefs_sysfs_entry reservation_size_attribute =
+	__ATTR(reservation_size, 0400, reservation_size_show, NULL);
+
+static struct ouichefs_sysfs_entry gc_runs_attribute =
+	__ATTR(gc_runs, 0400, gc_runs_show, NULL);
+
+static struct ouichefs_sysfs_entry total_blocks_attribute =
+	__ATTR(total_blocks, 0400, total_blocks_show, NULL);
+
 static struct attribute *ouichefs_sys_attrs[] = {
 	&free_blocks_attribute.attr,
+	&committed_blocks_attribute.attr,
+	&reserved_blocks_attribute.attr,
+	&files_attribute.attr,
+	&total_extents_attribute.attr,
+	&avg_extent_size_attribute.attr,
+	&max_file_size_attribute.attr,
+	&fragmentation_attribute.attr,
+	&reservation_size_attribute.attr,
+	&gc_runs_attribute.attr,
+	&total_blocks_attribute.attr,
 	NULL,	/* need to NULL terminate the list of attributes */
 };
 ATTRIBUTE_GROUPS(ouichefs_sys);
