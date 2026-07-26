@@ -277,7 +277,6 @@ ssize_t ouichefs_read(struct file *file, char __user *buf, size_t count, loff_t 
 }
 
 void ouichefs_garbage_collector(struct super_block *sb) {
-	pr_info("GC!");
 	struct inode *cur;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 
@@ -286,7 +285,6 @@ void ouichefs_garbage_collector(struct super_block *sb) {
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(cur);
 		if (ci->i_reserved_count > 0) {
 			inode_lock(cur);
-			pr_info("reservation count: %d", ci->i_reserved_count);
 			for (uint32_t i = 0; i < ci->i_reserved_count; i++) {
 				put_block(sbi, ci->i_reserved_start + i);
 			}
