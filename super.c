@@ -300,15 +300,16 @@ static struct super_operations ouichefs_super_ops = {
 	.statfs = ouichefs_statfs,
 };
 
-static ssize_t free_blocks_show(struct ouichefs_sb_info *sbi, char *buf)
+static ssize_t free_blocks_show(struct super_block *sb, char *buf)
 {
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
     return snprintf(buf, PAGE_SIZE, "Free blocks: %u\n", sbi->nr_free_blocks);
 }
 
 struct ouichefs_sysfs_entry {
 	struct attribute attr;
-	ssize_t (*show)(struct ouichefs_sb_info *, char *);
-	ssize_t (*store)(struct ouichefs_sb_info *, const char *, size_t);
+	ssize_t (*show)(struct super_block *, char *);
+	ssize_t (*store)(struct super_block *, const char *, size_t);
 };
 
 static struct ouichefs_sysfs_entry free_blocks_attribute =
@@ -330,7 +331,7 @@ static ssize_t ouichefs_type_show(struct kobject *kobj, struct attribute *attr,
 			     char *buf)
 {
 	struct ouichefs_sysfs *o_sysfs = to_o_sys(kobj);
-	struct ouichefs_sb_info *sbi = o_sysfs->sbi;
+	struct super_block *sb = o_sysfs->sb;
 	struct ouichefs_sysfs_entry *entry;
 
 	entry = container_of(attr, struct ouichefs_sysfs_entry, attr);
@@ -338,7 +339,7 @@ static ssize_t ouichefs_type_show(struct kobject *kobj, struct attribute *attr,
 	if (!entry->show)
 		return -EIO;
 
-	return entry->show(sbi, buf);
+	return entry->show(sb, buf);
 }
 
 static const struct sysfs_ops ouichefs_sysfs_ops = {
@@ -400,7 +401,7 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		return -ENOMEM;
 	}
 	kobject_init(&o_sys->kobj, &ouichefs_attr_type);
-	o_sys->sbi = sbi;
+	o_sys->sb = sb;
 	sbi->o_sys = o_sys;
 	ret = kobject_add(&o_sys->kobj, ouichefs_kobj, sb->s_bdev->bd_disk->disk_name);
 	if (ret) {

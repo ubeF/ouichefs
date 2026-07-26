@@ -69,7 +69,7 @@ struct ouichefs_inode_info {
 
 struct ouichefs_sysfs {
 	struct kobject kobj;
-	struct ouichefs_sb_info *sbi;
+	struct super_block *sb;
 };
 #define to_o_sys(kobj_o) container_of(kobj_o, struct ouichefs_sysfs, kobj)
 
