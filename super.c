@@ -251,6 +251,7 @@ static void ouichefs_put_super(struct super_block *sb)
 	if (sbi) {
 		kfree(sbi->ifree_bitmap);
 		kfree(sbi->bfree_bitmap);
+		kobject_put(&sbi->o_sys->kobj);
 		kfree(sbi);
 	}
 }
@@ -299,37 +300,6 @@ static struct super_operations ouichefs_super_ops = {
 	.statfs = ouichefs_statfs,
 };
 
-/*static void ouichefs_kobj_release(struct kobject *kobj)
-{
-}
-
-static ssize_t free_blocks_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	struct ouichefs_sb_info *sbi = container_of(kobj, struct ouichefs_sb_info, kobj);
-    return snprintf(buf, PAGE_SIZE, "Free blocks: %u\n", sbi->nr_free_blocks);
-}
-
-static const struct sysfs_ops sys_ops = {
-	.show = kobj_attr_show,
-	.store = NULL,
-};
-
-static struct kobj_type ouichefs_ktype = {
-	.release = ouichefs_kobj_release,
-	.sysfs_ops = &sys_ops,
-};
-
-const struct kobj_attribute free_blocks_attribute = __ATTR(free_blocks, 0400, free_blocks_show, NULL);
-
-static int create_sysfs_files(struct kobject *parent)
-{
-	int ret;
-	ret = sysfs_create_file(parent, &free_blocks_attribute.attr);
-	if (ret)
-		return -ENOMEM;
-	return 0;
-}*/
-
 static ssize_t free_blocks_show(struct ouichefs_sb_info *sbi, char *buf)
 {
     return snprintf(buf, PAGE_SIZE, "Free blocks: %u\n", sbi->nr_free_blocks);
@@ -352,12 +322,15 @@ ATTRIBUTE_GROUPS(ouichefs_sys);
 
 static void ouichefs_sys_release(struct kobject *kobj)
 {
+	struct ouichefs_sysfs *o_sys = to_o_sys(kobj);
+	kfree(o_sys);
 }
 
 static ssize_t ouichefs_type_show(struct kobject *kobj, struct attribute *attr,
 			     char *buf)
 {
-	struct ouichefs_sb_info *sbi = to_sbi(kobj);
+	struct ouichefs_sysfs *o_sysfs = to_o_sys(kobj);
+	struct ouichefs_sb_info *sbi = o_sysfs->sbi;
 	struct ouichefs_sysfs_entry *entry;
 
 	entry = container_of(attr, struct ouichefs_sysfs_entry, attr);
@@ -385,6 +358,7 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	struct ouichefs_sb_info *csb = NULL;
 	struct ouichefs_sb_info *sbi = NULL;
 	struct inode *root_inode = NULL;
+	struct ouichefs_sysfs *o_sys;
 	int ret = 0, i;
 
 	/* Init sb */
@@ -420,10 +394,19 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->nr_bfree_blocks = le32_to_cpu(csb->nr_bfree_blocks);
 	sbi->nr_free_inodes = le32_to_cpu(csb->nr_free_inodes);
 	sbi->nr_free_blocks = le32_to_cpu(csb->nr_free_blocks);
-	ret = kobject_init_and_add(&sbi->kobj, &ouichefs_attr_type, ouichefs_kobj, bh->b_bdev->bd_disk->disk_name);
+
+	o_sys = kzalloc(sizeof(*o_sys), GFP_KERNEL);
+	if (!o_sys) {
+		return -ENOMEM;
+	}
+	kobject_init(&o_sys->kobj, &ouichefs_attr_type);
+	o_sys->sbi = sbi;
+	sbi->o_sys = o_sys;
+	ret = kobject_add(&o_sys->kobj, ouichefs_kobj, sb->s_bdev->bd_disk->disk_name);
 	if (ret) {
-		kobject_put(&sbi->kobj);
-		goto free_sbi;
+		kobject_put(&o_sys->kobj);
+		kfree(o_sys);
+		return ret;
 	}
 	sb->s_fs_info = sbi;
 

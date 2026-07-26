@@ -67,6 +67,12 @@ struct ouichefs_inode_info {
 #define OUICHEFS_INODES_PER_BLOCK \
 	(OUICHEFS_BLOCK_SIZE / sizeof(struct ouichefs_inode))
 
+struct ouichefs_sysfs {
+	struct kobject kobj;
+	struct ouichefs_sb_info *sbi;
+};
+#define to_o_sys(kobj_o) container_of(kobj_o, struct ouichefs_sysfs, kobj)
+
 struct ouichefs_sb_info {
 	uint32_t magic; /* Magic number */
 
@@ -82,9 +88,9 @@ struct ouichefs_sb_info {
 
 	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
-	struct kobject kobj; /* The parent kobjects for all kobjects for this mounted instance */
+
+	struct ouichefs_sysfs *o_sys;
 };
-#define to_sbi(kobj_o) container_of(kobj_o, struct ouichefs_sb_info, kobj)
 
 struct ouichefs_extent {
 	uint32_t start; /* first physical block number of the run */
