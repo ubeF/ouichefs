@@ -565,18 +565,14 @@ int ouichefs_truncate(struct inode *inode)
 		struct ouichefs_extent *extent = &index->extents[i];
 		uint32_t keep;
 
-		if (!extent->start || !extent->count) {
-			pr_err("ouichefs: file has holes! we don't handle those yet!!\n");
-			ret = -EINVAL;
-			goto out_brelse;
-		}
-
 		/* Kept blocks of extent are either all of them or number of rest of needed blocks */
 		keep = min(remaining_blocks, extent->count);
 
-		for (uint32_t j = keep; j < extent->count; j++) {
-			put_block(sbi, extent->start + j);
-			inode->i_blocks--;
+		if (extent->start) {
+			for (uint32_t j = keep; j < extent->count; j++) {
+				put_block(sbi, extent->start + j);
+				inode->i_blocks--;
+			}
 		}
 
 		/* Update remaining_blocks or free extent if keep is zero */
