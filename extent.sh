@@ -306,6 +306,8 @@ else
     echo FAIL
 fi
 
+exec 3>&-
+
 rm -f *
 
 echo ""
