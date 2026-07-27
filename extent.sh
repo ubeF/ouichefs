@@ -305,3 +305,98 @@ if printf '%4096s' '' > trigger; then
 else
     echo FAIL
 fi
+
+exec 3>&-
+
+rm -f *
+
+echo ""
+echo "===================================="
+echo " Test Sysfs"
+echo "===================================="
+
+sys_path="/sys/ouichefs/vda"
+
+if ! total_blocks=$(cat "$sys_path/total_blocks"); then
+    echo "FAIL: error get total blocks"
+    exit 1
+else
+    echo "total blocks: $total_blocks"
+fi
+
+if ! free_blocks=$(cat "$sys_path/free_blocks"); then
+    echo "FAIL: error get free blocks"
+    exit 1
+else
+    echo "free blocks: $free_blocks"
+fi
+
+if ! committed_blocks=$(cat "$sys_path/committed_blocks"); then
+    echo "FAIL: error get committed blocks"
+    exit 1
+else
+    echo "committed blocks: $committed_blocks"
+fi
+
+if ! reserved_blocks=$(cat "$sys_path/reserved_blocks"); then
+    echo "FAIL: error get reserved blocks"
+    exit 1
+else
+    echo "reserved blocks: $reserved_blocks"
+fi
+
+if ! files=$(cat "$sys_path/files"); then
+    echo "FAIL: error get number files"
+    exit 1
+else
+    echo "number files: $files"
+fi
+
+if ! total_extents=$(cat "$sys_path/total_extents"); then
+    echo "FAIL: error get total extents"
+    exit 1
+else
+    echo "total extents: $total_extents"
+fi
+
+if ! avg_extent_size=$(cat "$sys_path/avg_extent_size"); then
+    echo "FAIL: error get avg extent size"
+    exit 1
+else
+    echo "avg extent size: $avg_extent_size"
+fi
+
+if ! max_file_size=$(cat "$sys_path/max_file_size"); then
+    echo "FAIL: error get max file size"
+    exit 1
+else
+    echo "max file size: $max_file_size"
+fi
+
+if ! fragmentation=$(cat "$sys_path/fragmentation"); then
+    echo "FAIL: error get fragmentation"
+    exit 1
+else
+    echo "fragmentation: $fragmentation"
+fi
+
+if ! reservation_size=$(cat "$sys_path/reservation_size"); then
+    echo "FAIL: error get reservation size"
+    exit 1
+else
+    echo "reservation: $reservation_size"
+fi
+
+if ! gc_runs=$(cat "$sys_path/gc_runs"); then
+    echo "FAIL: error get gc runs"
+    exit 1
+else
+    echo "gc runs: $gc_runs"
+fi
+
+if (( free_blocks + committed_blocks + reserved_blocks == total_blocks )); then
+    echo "PASS"
+else
+    echo "FAIL: free blocks + commited blocks + reserved blocks not equal total blocks"
+    exit 1
+fi

@@ -276,6 +276,7 @@ void ouichefs_garbage_collector(struct super_block *sb)
 	struct inode *cur;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 
+	sbi->nr_gc_runs++;
 	spin_lock(&sb->s_inode_list_lock);
 	list_for_each_entry(cur, &sb->s_inodes, i_sb_list) {
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(cur);
