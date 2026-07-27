@@ -462,21 +462,26 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	uint32_t end_block = end_pos / sb->s_blocksize;
 
 	/* Creating a filling hole when we write past the end of file */
-	if (inode->i_blocks > 0 && end_block >= inode->i_blocks) {
-		/* 
-			This could cause us to lose an extent under extreme fragmentation.
-			If the new blocks would be contiguous with the last extent, we wrongfully fail here. 
-			But this is unlikely under extreme fragmentation. So we will ignore this for now.
-		*/
-		if (index->num_extents >= OUICHEFS_MAX_EXTENTS) {
-			pr_err("file reached maximum number of extents\n");
-			brelse(bh_index);
-			inode_unlock(inode);
-			return -ENOSPC;
+	if (end_block >= inode->i_blocks) {
+		if (index->num_extents > 0 && extents[index->num_extents - 1].start == 0) {
+			/* If the last extent is a hole, we can just extend it */
+			extents[index->num_extents - 1].count = end_block - (inode->i_blocks - 1);
+		} else {
+			/* 
+				This could cause us to lose an extent under extreme fragmentation.
+				If the new blocks would be contiguous with the last extent, we wrongfully fail here. 
+				But this is unlikely under extreme fragmentation. So we will ignore this for now.
+			*/
+			if (index->num_extents >= OUICHEFS_MAX_EXTENTS) {
+				pr_err("file reached maximum number of extents\n");
+				brelse(bh_index);
+				inode_unlock(inode);
+				return -ENOSPC;
+			}
+			struct ouichefs_extent *new_extent = &extents[index->num_extents++];
+			new_extent->start = 0;
+			new_extent->count = end_block - (inode->i_blocks - 1);
 		}
-		struct ouichefs_extent *new_extent = &extents[index->num_extents++];
-		new_extent->start = 0;
-		new_extent->count = end_block - (inode->i_blocks - 1);
 		inode->i_blocks = end_block + 1; // Holes are also counted in i_blocks
 		mark_inode_dirty(inode);
 	}
