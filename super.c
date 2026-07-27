@@ -109,7 +109,7 @@ static void ouichefs_evict_inode(struct inode *inode)
 
 	truncate_inode_pages_final(&inode->i_data);
 
-	for (uint32_t i=0; i < inode_info->i_reserved_count; i++) {
+	for (uint32_t i = 0; i < inode_info->i_reserved_count; i++) {
 		put_block(sbi, inode_info->i_reserved_start + i);
 	}
 
@@ -303,7 +303,7 @@ static struct super_operations ouichefs_super_ops = {
 static ssize_t free_blocks_show(struct super_block *sb, char *buf)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-    return snprintf(buf, PAGE_SIZE, "%u\n", sbi->nr_free_blocks);
+	return sysfs_emit(buf, "%u\n", sbi->nr_free_blocks);
 }
 
 static ssize_t commited_blocks_show(struct super_block *sb, char *buf)
@@ -312,27 +312,41 @@ static ssize_t commited_blocks_show(struct super_block *sb, char *buf)
 	struct ouichefs_inode_info *ci;
 	struct buffer_head *bh_index;
 	struct ouichefs_file_index_block *index;
-	struct ouichefs_extent *extents;
-	uint32_t num_extents;
-
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	uint32_t committed_blocks = 0;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
-		ci = OUICHEFS_INODE(inode);
-		bh_index = sb_bread(sb, ci->index_block);
-		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		extents = index->extents;
-		num_extents = index->num_extents;
-		for (uint32_t i = 0; i < num_extents; i++) {
-			if (extents[i].start)
-				committed_blocks += extents[i].count;
-		}
-		brelse(bh_index);
-	}
-	spin_unlock(&sb->s_inode_list_lock);
+	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
 
-    return snprintf(buf, PAGE_SIZE, "%u\n", committed_blocks);
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
+
+		ci = OUICHEFS_INODE(inode);
+		if (ci->index_block)
+			committed_blocks++;
+		if (!S_ISREG(inode->i_mode)) {
+			iput(inode);
+			continue;
+		}
+		bh_index = sb_bread(sb, ci->index_block);
+		if (!bh_index) {
+			iput(inode);
+			return -EIO;
+		}
+
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		for(uint32_t i = 0; i < index->num_extents; i++) {
+			if(!index->extents[i].start)
+				continue;
+			committed_blocks += index->extents[i].count;
+		}
+
+		brelse(bh_index);
+		iput(inode);
+	}
+	return sysfs_emit(buf, "%u\n", committed_blocks);
 }
 
 static ssize_t reserved_blocks_show(struct super_block *sb, char *buf)
@@ -349,13 +363,28 @@ static ssize_t reserved_blocks_show(struct super_block *sb, char *buf)
 	}
 	spin_unlock(&sb->s_inode_list_lock);
 
-    return snprintf(buf, PAGE_SIZE, "%u\n", reserved_blocks);
+	return sysfs_emit(buf, "%u\n", reserved_blocks);
 }
 
 static ssize_t files_show(struct super_block *sb, char *buf)
 {
+	struct inode *inode;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-    return snprintf(buf, PAGE_SIZE, "%u\n", sbi->nr_inodes);
+	uint32_t num_files = 0;
+
+	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
+
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
+		if (S_ISREG(inode->i_mode)) {
+			num_files++;
+		}
+		iput(inode);
+	}
+	return sysfs_emit(buf, "%u\n", num_files);
 }
 
 static ssize_t total_extents_show(struct super_block *sb, char *buf)
@@ -364,22 +393,34 @@ static ssize_t total_extents_show(struct super_block *sb, char *buf)
 	struct ouichefs_inode_info *ci;
 	struct buffer_head *bh_index;
 	struct ouichefs_file_index_block *index;
-	struct ouichefs_extent *extents;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	uint64_t total_extents = 0;
 
-	uint32_t total_extents = 0;
+	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
+		if (!S_ISREG(inode->i_mode)) {
+			iput(inode);
+			continue;
+		}
 		ci = OUICHEFS_INODE(inode);
 		bh_index = sb_bread(sb, ci->index_block);
-		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		extents = index->extents;
-		total_extents += index->num_extents;
-		brelse(bh_index);
-	}
-	spin_unlock(&sb->s_inode_list_lock);
+		if (!bh_index) {
+			iput(inode);
+			return -EIO;
+		}
 
-    return snprintf(buf, PAGE_SIZE, "%u\n", total_extents);
+		index = (struct ouichefs_file_index_block *)bh_index->b_data;
+		total_extents += index->num_extents;
+
+		brelse(bh_index);
+		iput(inode);
+	}
+	return sysfs_emit(buf, "%llu\n", total_extents);
 }
 
 static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
@@ -388,44 +429,69 @@ static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
 	struct ouichefs_inode_info *ci;
 	struct buffer_head *bh_index;
 	struct ouichefs_file_index_block *index;
-	struct ouichefs_extent *extents;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	uint64_t total_extents = 0;
+	uint64_t total_blocks = 0;
 
-	uint32_t total_extents = 0;
-	uint32_t total_blocks = 0;
+	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
+		if (!S_ISREG(inode->i_mode)) {
+			iput(inode);
+			continue;
+		}
 		ci = OUICHEFS_INODE(inode);
 		bh_index = sb_bread(sb, ci->index_block);
+		if (!bh_index) {
+			iput(inode);
+			return -EIO;
+		}
+
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		extents = index->extents;
 		total_extents += index->num_extents;
 		for (uint32_t i = 0; i < index->num_extents; i++) {
-			total_blocks += extents[i].count;
+			if (!index->extents[i].start)
+				continue;
+			total_blocks += index->extents[i].count;
 		}
+
 		brelse(bh_index);
+		iput(inode);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
-
-	uint32_t avg_extent_size = (total_blocks / total_extents) * 100;
-
-    return snprintf(buf, PAGE_SIZE, "%u\n", avg_extent_size);
+	uint32_t avg_extent_size =
+		total_extents == 0 ? 0 : (total_blocks * 100) / total_extents;
+	return sysfs_emit(buf, "%u\n", avg_extent_size);
 }
 
 static ssize_t max_file_size_show(struct super_block *sb, char *buf)
 {
 	struct inode *inode;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	uint32_t max_inode_size = 0;
 
-	uint32_t largest_file_size = 0;
+	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
-		if (inode->i_size > largest_file_size)
-			largest_file_size = inode->i_size;
+		if (!S_ISREG(inode->i_mode)) {
+			iput(inode);
+			continue;
+		}
+
+		uint32_t size = i_size_read(inode);
+		if (size > max_inode_size)
+			max_inode_size = size;
+
+		iput(inode);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
-
-    return snprintf(buf, PAGE_SIZE, "%u\n", largest_file_size);
+	return sysfs_emit(buf, "%u\n", max_inode_size);
 }
 
 static ssize_t fragmentation_show(struct super_block *sb, char *buf)
@@ -435,42 +501,58 @@ static ssize_t fragmentation_show(struct super_block *sb, char *buf)
 	struct ouichefs_inode_info *ci;
 	struct buffer_head *bh_index;
 	struct ouichefs_file_index_block *index;
-	struct ouichefs_extent *extents;
 
+	uint32_t num_files = 0;
 	uint32_t total_extents = 0;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			return PTR_ERR(inode);
+
+		if (!S_ISREG(inode->i_mode)) {
+			iput(inode);
+			continue;
+		}
+
+		num_files++;
 		ci = OUICHEFS_INODE(inode);
 		bh_index = sb_bread(sb, ci->index_block);
+		if (!bh_index) {
+			iput(inode);
+			return -EIO;
+		}
+
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		extents = index->extents;
 		total_extents += index->num_extents;
-		brelse(bh_index);
+		iput(inode);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
 
-	uint32_t fragmentation = (total_extents / sbi->nr_inodes) * 100;
+	uint32_t fragmentation =
+		num_files == 0 ? 0 : (total_extents * 100) / num_files;
 
-    return snprintf(buf, PAGE_SIZE, "%u\n", fragmentation);
+	return sysfs_emit(buf, "%u\n", fragmentation);
 }
 
 static ssize_t reservation_size_show(struct super_block *sb, char *buf)
 {
-    return snprintf(buf, PAGE_SIZE, "%u\n", reservation_size);
+	return sysfs_emit(buf, "%u\n", reservation_size);
 }
 
 static ssize_t gc_runs_show(struct super_block *sb, char *buf)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-    return snprintf(buf, PAGE_SIZE, "%u\n", sbi->nr_gc_runs);
+	return sysfs_emit(buf, "%u\n", sbi->nr_gc_runs);
 }
 
 static ssize_t total_blocks_show(struct super_block *sb, char *buf)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-	uint32_t total_blocks = sbi->nr_blocks - sbi->nr_istore_blocks - sbi->nr_ifree_blocks - sbi->nr_bfree_blocks - sb->s_blocksize;
-    return snprintf(buf, PAGE_SIZE, "%u\n", total_blocks);
+	uint32_t total_blocks = sbi->nr_blocks - 1 - sbi->nr_istore_blocks -
+				sbi->nr_ifree_blocks - sbi->nr_bfree_blocks;
+	return sysfs_emit(buf, "%u\n", total_blocks);
 }
 
 struct ouichefs_sysfs_entry {
@@ -524,7 +606,7 @@ static struct attribute *ouichefs_sys_attrs[] = {
 	&reservation_size_attribute.attr,
 	&gc_runs_attribute.attr,
 	&total_blocks_attribute.attr,
-	NULL,	/* need to NULL terminate the list of attributes */
+	NULL, /* need to NULL terminate the list of attributes */
 };
 ATTRIBUTE_GROUPS(ouichefs_sys);
 
@@ -535,7 +617,7 @@ static void ouichefs_sys_release(struct kobject *kobj)
 }
 
 static ssize_t ouichefs_type_show(struct kobject *kobj, struct attribute *attr,
-			     char *buf)
+				  char *buf)
 {
 	struct ouichefs_sysfs *o_sysfs = to_o_sys(kobj);
 	struct super_block *sb = o_sysfs->sb;
@@ -554,9 +636,9 @@ static const struct sysfs_ops ouichefs_sysfs_ops = {
 };
 
 static struct kobj_type ouichefs_attr_type = {
-	.release	= ouichefs_sys_release,
-	.sysfs_ops	= &ouichefs_sysfs_ops,
-	.default_groups	= ouichefs_sys_groups,
+	.release = ouichefs_sys_release,
+	.sysfs_ops = &ouichefs_sysfs_ops,
+	.default_groups = ouichefs_sys_groups,
 };
 
 /* Fill the struct superblock from partition superblock */
@@ -610,7 +692,8 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	kobject_init(&o_sys->kobj, &ouichefs_attr_type);
 	o_sys->sb = sb;
 	sbi->o_sys = o_sys;
-	ret = kobject_add(&o_sys->kobj, ouichefs_kobj, sb->s_bdev->bd_disk->disk_name);
+	ret = kobject_add(&o_sys->kobj, ouichefs_kobj,
+			  sb->s_bdev->bd_disk->disk_name);
 	if (ret) {
 		kobject_put(&o_sys->kobj);
 		kfree(o_sys);
@@ -636,8 +719,9 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 			goto free_ifree;
 		}
 
-		copy_bitmap_from_le64((void *)sbi->ifree_bitmap + i * OUICHEFS_BLOCK_SIZE,
-			(__le64 *)bh->b_data);
+		copy_bitmap_from_le64((void *)sbi->ifree_bitmap +
+					      i * OUICHEFS_BLOCK_SIZE,
+				      (__le64 *)bh->b_data);
 
 		brelse(bh);
 	}
@@ -658,8 +742,9 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 			goto free_bfree;
 		}
 
-		copy_bitmap_from_le64((void *)sbi->bfree_bitmap + i * OUICHEFS_BLOCK_SIZE,
-			(__le64 *)bh->b_data);
+		copy_bitmap_from_le64((void *)sbi->bfree_bitmap +
+					      i * OUICHEFS_BLOCK_SIZE,
+				      (__le64 *)bh->b_data);
 
 		brelse(bh);
 	}
