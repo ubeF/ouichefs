@@ -18,28 +18,58 @@ echo "  Generic read/write tests"
 echo "============================"
 
 echo "== Simple write + read =="
-echo "Moin" > test.txt
-if [ "$(cat test.txt)" = "Moin" ]; then
-    echo "PASS"
-else
-    echo "FAIL"
+if ! printf '%s\n' "Moin" > test.txt; then
+    echo "WRITE FAILED"
+    exit 1
 fi
+
+if ! output=$(cat test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Moin" ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
 
 echo "== Append =="
-echo "Servus" >> test.txt
-if [ "$(cat test.txt)" = $'Moin\nServus' ]; then
-    echo "PASS"
-else
-    echo "FAIL"
+if ! printf '%s\n' "Servus" >> test.txt; then
+    echo "WRITE FAILED"
+    exit 1
 fi
 
-echo "== Overwrite =="
-echo "Salet" > test.txt
-if [ "$(cat test.txt)" = "Salet" ]; then
-    echo "PASS"
-else
-    echo "FAIL"
+if ! output=$(cat test.txt); then
+    echo "READ FAILED"
+    exit 1
 fi
+
+if [ "$output" = $'Moin\nServus' ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
+
+echo "== Overwrite =="
+if ! printf '%s\n' "Salet" > test.txt; then
+    echo "WRITE FAILED"
+    exit 1
+fi
+
+if ! output=$(cat test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Salet" ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
 
 #echo ""
 #echo "==================="

@@ -462,10 +462,10 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	uint32_t end_block = end_pos / sb->s_blocksize;
 
 	/* Creating a filling hole when we write past the end of file */
-	if (end_block >= inode->i_blocks) {
+	if (end_block >= inode->i_blocks - 1) {
 		if (index->num_extents > 0 && extents[index->num_extents - 1].start == 0) {
 			/* If the last extent is a hole, we can just extend it */
-			extents[index->num_extents - 1].count = end_block - (inode->i_blocks - 1);
+			extents[index->num_extents - 1].count = end_block - (inode->i_blocks - 2);
 		} else {
 			/* 
 				This could cause us to lose an extent under extreme fragmentation.
@@ -480,9 +480,9 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			}
 			struct ouichefs_extent *new_extent = &extents[index->num_extents++];
 			new_extent->start = 0;
-			new_extent->count = end_block - (inode->i_blocks - 1);
+			new_extent->count = end_block - (inode->i_blocks - 2);
 		}
-		inode->i_blocks = end_block + 1; // Holes are also counted in i_blocks
+		inode->i_blocks = end_block + 2; // Holes are also counted in i_blocks, dont forget the index block
 		mark_inode_dirty(inode);
 	}
 
@@ -533,7 +533,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		uint32_t pblock = ouichefs_extent_get_block(extents, iblock);
 
 		if (!pblock) {
-			/* We hit a hole, all blocks are allocated */
+			pr_err("ouichefs: we hit a hole when writing block=%u\n", iblock);
 			result = -ENOSPC;
 			break;
 		}
@@ -641,9 +641,9 @@ int ouichefs_truncate(struct inode *inode)
 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh->b_data;
 
-	inode->i_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
+	uint32_t required_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
-	uint32_t remaining_blocks = inode->i_blocks;
+	uint32_t remaining_blocks = required_blocks;
 	uint32_t old_num_extents = index->num_extents;
 	uint32_t new_num_extents = 0;
 
@@ -686,6 +686,7 @@ int ouichefs_truncate(struct inode *inode)
 
 	mark_buffer_dirty(bh);
 	brelse(bh);
+	inode->i_blocks = required_blocks + 1; // +1 for index block
 	mark_inode_dirty(inode);
 
 	return 0;
