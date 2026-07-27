@@ -628,7 +628,6 @@ int ouichefs_truncate(struct inode *inode)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
 	struct buffer_head *bh;
-	uint32_t required_num_blocks;
 
 	bh = sb_bread(sb, inode_info->index_block);
 	if (!bh) {
@@ -642,9 +641,9 @@ int ouichefs_truncate(struct inode *inode)
 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh->b_data;
 
-	required_num_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
+	inode->i_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
-	uint32_t remaining_blocks = required_num_blocks;
+	uint32_t remaining_blocks = inode->i_blocks;
 	uint32_t old_num_extents = index->num_extents;
 	uint32_t new_num_extents = 0;
 
@@ -663,7 +662,6 @@ int ouichefs_truncate(struct inode *inode)
 		if (extent->start) {
 			for (uint32_t j = keep; j < extent->count; j++) {
 				put_block(sbi, extent->start + j);
-				inode->i_blocks--;
 			}
 		}
 
