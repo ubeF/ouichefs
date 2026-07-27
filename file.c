@@ -81,6 +81,8 @@ static uint32_t ouichefs_alloc(struct inode *inode, uint32_t requested, uint32_t
 	ci->i_reserved_start += allocated_count;
 	ci->i_reserved_count -= allocated_count;
 
+	inode->i_blocks += allocated_count;
+
 	*block = allocated_start;
 
 	mark_inode_dirty(inode);
@@ -331,7 +333,7 @@ void ouichefs_garbage_collector(struct super_block *sb) {
 	spin_unlock(&sb->s_inode_list_lock);
 }
 
-size_t ouichefs_shift_extents(struct ouichefs_file_index_block *index, size_t extent_idx)
+ssize_t ouichefs_shift_extents(struct ouichefs_file_index_block *index, size_t extent_idx)
 {
 	struct ouichefs_extent *list = index->extents;
 	if (index->num_extents + 1 > OUICHEFS_MAX_EXTENTS) {
@@ -347,7 +349,7 @@ size_t ouichefs_shift_extents(struct ouichefs_file_index_block *index, size_t ex
 	return extent_idx;
 }
 
-size_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct ouichefs_extent new, size_t extent_idx, size_t block_idx)
+ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct ouichefs_extent new, size_t extent_idx, size_t block_idx)
 {
 	struct ouichefs_extent *list = index->extents;
 	uint32_t old_count = list[extent_idx].count;
@@ -363,7 +365,7 @@ size_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct ou
 		/* shrink hole */
 		list[extent_idx].count = block_idx;
 		/* Shift all extents in extents list by 1 down*/
-		if(!ouichefs_shift_extents(index, ++extent_idx))
+		if(ouichefs_shift_extents(index, ++extent_idx) < 0)
 			return -ENOSPC;
 		/* Insert new extent in newly created gap */
 		list[extent_idx] = new;
@@ -371,10 +373,10 @@ size_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct ou
 	/* Check if there is still hole after new extent */
 	if (old_count > block_idx + new.count) {
 		/* create a gap after inserted extent for remaining hole */
-		if(!ouichefs_shift_extents(index, extent_idx+1))
+		if(ouichefs_shift_extents(index, extent_idx+1) < 0)
 			return -ENOSPC;
 		list[extent_idx+1].start = 0;
-		list[extent_idx+1].count = old_count > block_idx - new.count;
+		list[extent_idx+1].count = old_count - block_idx - new.count;
 	}
 
 	return extent_idx;
@@ -402,10 +404,10 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 	uint32_t start_block = *pos / sb->s_blocksize;
 	uint64_t end_pos = *pos + count;
-	uint32_t end_block = end_pos / sb->s_blocksize; 
+	uint32_t end_block = (end_pos + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
 	/* Creating a filling hole when we start writing after end of file */
-	if (end_block > inode->i_blocks - 1) {
+	if (inode->i_blocks > 0 && end_block > inode->i_blocks - 1) {
 		struct ouichefs_extent *new_extent = &extents[index->num_extents++];
 		new_extent->start = 0;
 		new_extent->count = end_block - (inode->i_blocks - 1);
