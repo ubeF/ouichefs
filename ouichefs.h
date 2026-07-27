@@ -10,6 +10,8 @@
 #include <linux/types.h>
 #include <linux/fs.h>
 
+#include "linux/kobject.h"
+
 #define OUICHEFS_MAGIC 0x48434957
 
 #define OUICHEFS_SB_BLOCK_NR 0
@@ -65,6 +67,12 @@ struct ouichefs_inode_info {
 #define OUICHEFS_INODES_PER_BLOCK \
 	(OUICHEFS_BLOCK_SIZE / sizeof(struct ouichefs_inode))
 
+struct ouichefs_sysfs {
+	struct kobject kobj;
+	struct super_block *sb;
+};
+#define to_o_sys(kobj_o) container_of(kobj_o, struct ouichefs_sysfs, kobj)
+
 struct ouichefs_sb_info {
 	uint32_t magic; /* Magic number */
 
@@ -77,9 +85,13 @@ struct ouichefs_sb_info {
 
 	uint32_t nr_free_inodes; /* Number of free inodes */
 	uint32_t nr_free_blocks; /* Number of free blocks */
-
+	
 	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
+
+	struct ouichefs_sysfs *o_sys;
+
+	uint32_t nr_gc_runs;
 };
 
 struct ouichefs_extent {
@@ -100,6 +112,7 @@ struct ouichefs_dir_block {
 };
 
 extern uint32_t reservation_size;
+extern struct kobject *ouichefs_kobj;
 
 /* superblock functions */
 int ouichefs_fill_super(struct super_block *sb, void *data, int silent);
