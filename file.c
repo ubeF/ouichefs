@@ -351,15 +351,26 @@ size_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct ou
 {
 	struct ouichefs_extent *list = index->extents;
 	uint32_t old_count = list[extent_idx].count;
+	/* Case: we have to insert new extent directly after an extent, at the beginning of a hole */
 	if (block_idx == 0) {
-		list[extent_idx] = new;
+		/* If extents align, we can merge */
+		if (list[extent_idx-1].start + list[extent_idx-1].count == new.start)
+			list[extent_idx-1].count += new.count;
+		else
+			list[extent_idx] = new;
 	} else {
+		/* Case we insert in the middle of hole */
+		/* shrink hole */
 		list[extent_idx].count = block_idx;
+		/* Shift all extents in extents list by 1 down*/
 		if(!ouichefs_shift_extents(index, ++extent_idx))
 			return -ENOSPC;
+		/* Insert new extent in newly created gap */
 		list[extent_idx] = new;
 	}
+	/* Check if there is still hole after new extent */
 	if (old_count > block_idx + new.count) {
+		/* create a gap after inserted extent for remaining hole */
 		if(!ouichefs_shift_extents(index, extent_idx+1))
 			return -ENOSPC;
 		list[extent_idx+1].start = 0;
@@ -393,6 +404,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	uint64_t end_pos = *pos + count;
 	uint32_t end_block = end_pos / sb->s_blocksize; 
 
+	/* Creating a filling hole when we start writing after end of file */
 	if (end_block > inode->i_blocks - 1) {
 		struct ouichefs_extent *new_extent = &extents[index->num_extents++];
 		new_extent->start = 0;
@@ -407,12 +419,15 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	}
 	uint32_t block_offset = start_block - block_idx;
 
+	/* Allocate blocks */
 	for (uint32_t i = start_block; i < end_block; i += extents[extent_idx++].count) {
 		struct ouichefs_extent *extent = &extents[extent_idx];
+		/* If there is no hole, skip */
 		if (extent->start) {
 			block_offset = 0;
 			continue;
 		}
+		/* otherwise, allocate */
 		uint32_t blocks_to_write = min(extent->count - block_offset, end_block - i + 1);
 		struct ouichefs_extent new_extent;
 		new_extent.count = ouichefs_alloc(inode, blocks_to_write, &new_extent.start);
