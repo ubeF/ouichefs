@@ -555,6 +555,17 @@ static ssize_t total_blocks_show(struct super_block *sb, char *buf)
 	return sysfs_emit(buf, "%u\n", total_blocks);
 }
 
+static ssize_t reservation_size_store(struct super_block *sb, const char *buf, size_t count)
+{
+	uint32_t val;
+    int rc = sscanf(buf, "%u", &val);
+    if (rc != 1 || rc < 0)
+        return -EINVAL;
+
+    reservation_size = val;
+    return count;
+}
+
 struct ouichefs_sysfs_entry {
 	struct attribute attr;
 	ssize_t (*show)(struct super_block *, char *);
@@ -586,7 +597,7 @@ static struct ouichefs_sysfs_entry fragmentation_attribute =
 	__ATTR(fragmentation, 0400, fragmentation_show, NULL);
 
 static struct ouichefs_sysfs_entry reservation_size_attribute =
-	__ATTR(reservation_size, 0400, reservation_size_show, NULL);
+	__ATTR(reservation_size, 0644, reservation_size_show, reservation_size_store);
 
 static struct ouichefs_sysfs_entry gc_runs_attribute =
 	__ATTR(gc_runs, 0400, gc_runs_show, NULL);
@@ -631,8 +642,24 @@ static ssize_t ouichefs_type_show(struct kobject *kobj, struct attribute *attr,
 	return entry->show(sb, buf);
 }
 
+static ssize_t ouichefs_type_store(struct kobject *kobj, struct attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct ouichefs_sysfs *o_sysfs = to_o_sys(kobj);
+	struct super_block *sb = o_sysfs->sb;
+	struct ouichefs_sysfs_entry *entry;
+
+	entry = container_of(attr, struct ouichefs_sysfs_entry, attr);
+
+	if (!entry->show)
+		return -EIO;
+
+	return entry->store(sb, buf, count);
+}
+
 static const struct sysfs_ops ouichefs_sysfs_ops = {
 	.show = ouichefs_type_show,
+	.store = ouichefs_type_store,
 };
 
 static struct kobj_type ouichefs_attr_type = {
