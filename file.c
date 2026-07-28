@@ -618,16 +618,19 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode) {
 
 	/* Count total blocks and extra extents needed because of holes */
 	uint32_t needed_blocks = 0;
-	uint32_t needed_extents = 0;
 
 	for (uint32_t i = 0; i < index->num_extents; i++) {
 		uint32_t start = index->extents[i].start;
 		uint32_t count = index->extents[i].count;
 		if (!start) {
-			needed_extents++;
 			continue;
 		}
 		needed_blocks += count;
+	}
+
+	if (needed_blocks == 0) {
+		brelse(bh_index);
+		return 0;
 	}
 
 	/* Try to allocate contiguous amount of blocks */
@@ -637,69 +640,79 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode) {
 		brelse(bh_index);
 		return -ENOSPC;
 	}
-	/* Move data to new place and create a new extent list */
-	struct ouichefs_extent new_extent_list[OUICHEFS_MAX_EXTENTS];
-	for (uint32_t i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
-		new_extent_list[i].start = 0;
-		new_extent_list[i].count = 0;
-	}
-
+	/* Create a new extent list */
+	struct ouichefs_extent *new_extent_list = kzalloc(sizeof(index->extents), GFP_KERNEL);	 
 	uint32_t new_extent_index = 0;
-	if (allocated_blocks < needed_blocks) {
-		/* Partial defrag */
-		/* We do not want more fragmentation -> happens if allocated_blocks < extent[any].count; */
-		return -ENOSPC;
-		// for (uint32_t i = 0; i < index->num_extents; i++){
-		//
-		// }
-	} else {
-		/* Full defrag */
-		// Logic may be broken. You need to keep track how much we already allocated or maybe not?
-		// Since allocated_blocks should be the same amount as needed_blocks
-		for (uint32_t i = 0; i < index->num_extents; i++) {
-			uint32_t old_start = index->extents[i].start;
-			uint32_t old_count = index->extents[i].count;
+	uint32_t old_extent_index = 0;
+	
+	/* Copy as much data as possible */
+	for (uint32_t blocks_copied = 0; old_extent_index < index->num_extents && blocks_copied < allocated_blocks; old_extent_index++) {
+		uint32_t old_start = index->extents[old_extent_index].start;
+		uint32_t old_count = index->extents[old_extent_index].count;
 
-			/* Hole we add extent with same count */
-			if (!old_start) {
-				new_block_start += new_extent_list[new_extent_index].count;
-				new_extent_index++;
-				new_extent_list[new_extent_index].count = old_count;
+		/* Hole we add extent with same count */
+		if (!old_start) {
+			if (new_extent_list[new_extent_index].start)
+				++new_extent_index;
+			new_extent_list[new_extent_index].count += old_count;
+		} else {
+			if (!new_extent_list[new_extent_index].start) {
+				if (new_extent_list[new_extent_index].count)
+					++new_extent_index;
+				new_extent_list[new_extent_index].start = new_block_start + blocks_copied;
 			}
-			if (!new_extent_list[new_extent_index].start)
-				new_extent_list[new_extent_index].start = new_block_start;
 			for (uint32_t j = 0; j < old_count; j++) {
-				if (ouichefs_copy_block(sb, old_start + j, new_block_start + j))
+				if (blocks_copied + 1 > allocated_blocks) {
+					/* We have run out of allocated blocks, we need to create a new extent for the remaining blocks */
+					new_extent_index++;
+					new_extent_list[new_extent_index].start = old_start + j;
+					new_extent_list[new_extent_index].count = old_count - j;
+					break;
+				}
+				if (ouichefs_copy_block(sb, old_start + j, new_extent_list[new_extent_index].start + j))
 					goto restore_old;
+				blocks_copied++;
 				new_extent_list[new_extent_index].count++;
 			}
 		}
 	}
 
+	while(old_extent_index < index->num_extents) {
+		new_extent_list[new_extent_index++] = index->extents[old_extent_index++];
+	}
+
 	/*
 	 * If copying succeded:
-	 * Free all the old blocks and set the new extent list.
+	 * Free all the copied blocks and set the new extent list.
 	 */
-	for (uint32_t i = 0; i < index->num_extents; i++) {
+	uint32_t freed_blocks = 0;
+	for (uint32_t i = 0; i < index->num_extents && freed_blocks < allocated_blocks; i++) {
 		uint32_t old_start = index->extents[i].start;
 		uint32_t old_count = index->extents[i].count;
 
-		for (uint32_t j = 0; j < old_count; j++) {
+		for (uint32_t j = 0; j < old_count && freed_blocks < allocated_blocks; j++) {
+			if (!old_start)
+				continue;
 			put_block(sbi, old_start + j);
+			freed_blocks++;
 		}
 	}
 	
-	memcpy(&index->num_extents, &needed_extents, sizeof(uint32_t));
-	memcpy(&index->extents, new_extent_list, sizeof(struct ouichefs_extent));
+	index->num_extents = new_extent_index;
+	memcpy(&index->extents, new_extent_list, sizeof(index->extents));
 
+	mark_buffer_dirty(bh_index);
+	sync_dirty_buffer(bh_index);
+	kfree(new_extent_list);
 	brelse(bh_index);
 	return allocated_blocks;
 
 restore_old:
-	/* Needs to free all allocated_blocks -> not done yet!!!
-	 * needs bookeeping on what we allocated to restore back to original
-	 */
+	for (uint32_t i = 0; i < allocated_blocks; i++) {
+		put_block(sbi, new_block_start + i);
+	}
 	brelse(bh_index);
+	kfree(new_extent_list);
 	return 0;
 }
 
