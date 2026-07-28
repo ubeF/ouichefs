@@ -522,3 +522,213 @@ else
     echo "FAIL: free blocks + commited blocks + reserved blocks not equal total blocks"
     exit 1
 fi
+
+echo ""
+echo "===================================="
+echo " Defragmentation Test"
+echo "===================================="
+
+cp ../ouichefs/extent_ioctl.h .
+
+printf "%s" '
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <stdio.h>
+
+#include "extent_ioctl.h"
+
+int main(int argc, char **argv)
+{
+    int fd = open(argv[1], O_RDONLY);
+
+    if (fd < 0) {
+        printf("failed to open file!\n");
+        return 1;
+    }
+
+	int ret = ioctl(fd, OUICHEFS_IOC_DEFRAG_FILE);
+	if (ret <= 0) {
+        printf("defrag failed!\n");
+        return 1;
+    } else {
+		printf("defrag succeeded, %d blocks allocated\n", ret);
+	}
+
+    close(fd);
+    return 0;
+}
+' > defrag_file.c
+
+if ! gcc defrag_file.c -o /tmp/defrag_file; then
+	echo "Cannot compile user program!"
+	exit 1
+fi
+
+# disable reservation for these tests
+echo 0 > "/sys/module/ouichefs/parameters/reservation_size"
+
+echo "== Simple defragmentation test =="
+# Create a fragmented file
+rm *
+
+exec 3>test1.txt
+exec 4>test2.txt
+
+for i in 1 2 3 4 5; do
+    printf '%4096s' '' >&3 || exit 1
+    printf '%4096s' '' >&4 || exit 1
+done
+
+exec 3>&-
+exec 4>&-
+
+sync
+
+# Check whether the file is fragmented (more than 1 extent) before defrag
+dmesg -C
+if ! /tmp/get_extents_ioctl "test1.txt"; then
+    echo "get_extents ioctl failed"
+    echo "FAIL"
+    exit 1
+fi
+
+extents=$(dmesg | grep -oE '[0-9]+ extent\(s\)' | awk '{print $1}' | head -n1)
+if [ -z "$extents" ]; then
+    echo "Could not determine extent count from dmesg"
+    echo "FAIL"
+    exit 1
+fi
+
+if [ "$extents" -le 1 ]; then
+    echo "file not fragmented (extents=$extents)"
+    echo "FAIL"
+    exit 1
+fi
+
+# Run defrag helper on test1.txt and ensure it reports 5 blocks allocated
+if ! output=$(/tmp/defrag_file "test1.txt"); then
+    echo "defrag helper failed"
+    echo "FAIL"
+    exit 1
+fi
+
+if ! printf '%s' "$output" | grep -q "defrag succeeded, 5 blocks allocated"; then
+    echo "defrag did not return 5"
+    echo "Output: $output"
+    echo "FAIL"
+    exit 1
+fi
+
+# Verify extents: expect single extent of size 5
+dmesg -C
+if ! /tmp/get_extents_ioctl "test1.txt"; then
+    echo "get_extents ioctl failed"
+    echo "FAIL"
+    exit 1
+fi
+
+if ! dmesg | grep -q "1 extent(s)" || ! dmesg | grep -q "count=5"; then
+    echo "Wrong extents after defrag"
+    dmesg
+    exit 1
+fi
+
+echo "PASS"
+
+echo ""
+echo "== Defrag preserves holes test =="
+
+# Create a file with a hole in the middle: data at block 0 and at block 3 (two-block hole)
+rm -f *
+printf '%s' "A" | dd of=hole.txt bs=4096 count=1 seek=0 conv=notrunc status=none
+printf '%s' "B" | dd of=hole.txt bs=4096 count=1 seek=3 conv=notrunc status=none
+sync
+
+# Run defrag
+if ! output=$(/tmp/defrag_file "hole.txt"); then
+    echo "defrag helper failed"
+    echo "FAIL"
+    exit 1
+fi
+
+# Verify hole still present after defrag
+dmesg -C
+if ! /tmp/get_extents_ioctl "hole.txt"; then
+    echo "get_extents ioctl failed"
+    exit 1
+fi
+
+if ! dmesg | grep -q "start=0 count=2"; then
+    echo "Hole was not preserved after defrag"
+    dmesg
+    exit 1
+fi
+
+echo "PASS"
+
+echo ""
+echo "== Partial defragmentation under low space =="
+
+# Create fragmented file by writing alternately to two files
+rm -f *
+exec 3>part1.txt
+exec 4>part2.txt
+for i in $(seq 1 50); do
+    printf '%4096s' '' >&3 || exit 1
+    printf '%4096s' '' >&4 || exit 1
+done
+exec 3>&-
+exec 4>&-
+sync
+
+# Fill filesystem completely
+rm -f filler
+while printf '%4096s' '' >> filler; do
+    :
+done
+
+# Free a small amount of space (8 blocks)
+truncate -s $(( $(stat -c %s filler) - 32768 )) filler
+sync
+
+# Expected values for this partial-defrag scenario
+needed_blocks=50
+expected_allocated=8
+
+# Run defrag (should be partial) and verify it moved some blocks and preserved total blocks
+if ! output=$(/tmp/defrag_file "part1.txt"); then
+    echo "defrag helper failed"
+    echo "FAIL"
+    exit 1
+fi
+
+allocated=$(printf '%s' "$output" | grep -oE '[0-9]+' | tail -n1)
+if [ -z "$allocated" ]; then
+    echo "defrag returned no allocated blocks"
+    echo "Output: $output"
+    echo "FAIL"
+    exit 1
+fi
+
+if [ "$allocated" -ne "$expected_allocated" ]; then
+    echo "defrag allocated $allocated blocks, expected $expected_allocated"
+    echo "Output: $output"
+    echo "FAIL"
+    exit 1
+fi
+
+# Verify total blocks equal expected (no data loss)
+dmesg -C
+if ! /tmp/get_extents_ioctl "part1.txt"; then
+    echo "get_extents ioctl failed"
+    exit 1
+fi
+after_blocks=$(dmesg | grep -o 'count=[0-9]*' | awk -F= '{sum += $2} END {print sum}')
+if [ "$after_blocks" -ne "$needed_blocks" ]; then
+    echo "Block count mismatch after defrag: expected=$needed_blocks after=$after_blocks"
+    dmesg
+    exit 1
+fi
+
+echo "PASS"
