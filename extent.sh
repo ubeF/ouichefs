@@ -122,6 +122,77 @@ else
     exit 1
 fi
 
+echo "== Writing into the Hole correct Filesize check =="
+if ! old_size=$(stat -c '%s' test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if ! printf "TEST" | dd of=test.txt bs=1 seek=$((4096 + 100)) conv=notrunc status=none; then 
+    echo "WRITE FAILED" 
+    exit 1 
+fi
+
+if ! new_size=$(stat -c '%s' test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$new_size" -eq "$old_size" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+echo "== Written data inside hole is correct =="
+
+if dd if=test.txt bs=1 skip=$((4096 + 100)) count=4 status=none |
+   cmp -s - <(printf "TEST"); then
+    echo "PASS"
+else
+    echo "FAIL"
+
+    echo "Expected:"
+    printf "TEST" | od -An -tx1
+
+    echo "Actual:"
+    dd if=test.txt bs=1 skip=$((4096 + 100)) count=4 status=none |
+        od -An -tx1
+
+    exit 1
+fi
+
+echo "== Original data is still correct =="
+
+if ! output=$(tail -c 4 test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Moin" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+echo "== Bytes around written data remain zero =="
+
+if ! output=$(dd if=test.txt bs=1 skip=4096 count=100 status=none |
+    tr -d '\0' |
+    wc -c); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "0" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
 echo ""
 echo "============================"
 echo "  Test Get Extents IOCTL"
