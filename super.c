@@ -315,7 +315,7 @@ static ssize_t commited_blocks_show(struct super_block *sb, char *buf)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	uint32_t committed_blocks = 0;
 
-	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
 		if (test_bit(ino, sbi->ifree_bitmap))
 			continue;
 
@@ -372,7 +372,7 @@ static ssize_t files_show(struct super_block *sb, char *buf)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	uint32_t num_files = 0;
 
-	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
 		if (test_bit(ino, sbi->ifree_bitmap))
 			continue;
 
@@ -396,7 +396,7 @@ static ssize_t total_extents_show(struct super_block *sb, char *buf)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	uint64_t total_extents = 0;
 
-	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
 		if (test_bit(ino, sbi->ifree_bitmap))
 			continue;
 
@@ -433,7 +433,7 @@ static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
 	uint64_t total_extents = 0;
 	uint64_t total_blocks = 0;
 
-	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
 		if (test_bit(ino, sbi->ifree_bitmap))
 			continue;
 
@@ -473,7 +473,7 @@ static ssize_t max_file_size_show(struct super_block *sb, char *buf)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	uint32_t max_inode_size = 0;
 
-	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
 		if (test_bit(ino, sbi->ifree_bitmap))
 			continue;
 		inode = ouichefs_iget(sb, ino);
@@ -505,7 +505,7 @@ static ssize_t fragmentation_show(struct super_block *sb, char *buf)
 	uint32_t num_files = 0;
 	uint32_t total_extents = 0;
 
-	for (uint32_t ino = 0; ino < sbi->nr_inodes; ino++) {
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
 		if (test_bit(ino, sbi->ifree_bitmap))
 			continue;
 		inode = ouichefs_iget(sb, ino);

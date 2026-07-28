@@ -18,57 +18,180 @@ echo "  Generic read/write tests"
 echo "============================"
 
 echo "== Simple write + read =="
-echo "Moin" > test.txt
-if [ "$(cat test.txt)" = "Moin" ]; then
-    echo "PASS"
-else
-    echo "FAIL"
+if ! printf '%s\n' "Moin" > test.txt; then
+    echo "WRITE FAILED"
+    exit 1
 fi
+
+if ! output=$(cat test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Moin" ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
 
 echo "== Append =="
-echo "Servus" >> test.txt
-if [ "$(cat test.txt)" = $'Moin\nServus' ]; then
-    echo "PASS"
-else
-    echo "FAIL"
+if ! printf '%s\n' "Servus" >> test.txt; then
+    echo "WRITE FAILED"
+    exit 1
 fi
+
+if ! output=$(cat test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = $'Moin\nServus' ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
 
 echo "== Overwrite =="
-echo "Salet" > test.txt
-if [ "$(cat test.txt)" = "Salet" ]; then
+if ! printf '%s\n' "Salet" > test.txt; then
+    echo "WRITE FAILED"
+    exit 1
+fi
+
+if ! output=$(cat test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Salet" ]; then
     echo "PASS"
 else
     echo "FAIL"
+    exit 1
 fi
 
-#echo ""
-#echo "==================="
-#echo "  File with Holes"
-#echo "==================="
-#
-#rm -f test.txt
-#echo -n "Moin" | dd of=test.txt bs=4096 seek=2 status=none
-#
-#echo "== Correct Filesize =="
-#if [ "$(stat -c '%s' test.txt)" = "8196" ]; then
-#    echo "PASS"
-#else
-#    echo "FAIL"
-#fi
-#
-#echo "== Empty blocks are zero =="
-#if [ "$(dd if=test.txt bs=8192 count=1 status=none | tr -d '\0' | wc -c)" = "0" ]; then
-#    echo "PASS"
-#else
-#    echo "FAIL"
-#fi
-#
-#echo "== Data is accessible =="
-#if [ "$(tail -c 4 test.txt)" = "Moin" ]; then
-#    echo "PASS"
-#else
-#    echo "FAIL"
-#fi
+echo ""
+echo "==================="
+echo "  File with Holes"
+echo "==================="
+
+rm -f test.txt
+
+if ! echo -n "Moin" | dd of=test.txt bs=4096 seek=2 status=none; then
+    echo "WRITE FAILED"
+    exit 1
+fi
+
+echo "== Correct Filesize =="
+if ! size=$(stat -c '%s' test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$size" = "8196" ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
+
+echo "== Empty blocks are zero =="
+if ! output=$(dd if=test.txt bs=8192 count=1 status=none | tr -d '\0' | wc -c); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "0" ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
+
+echo "== Data is accessible =="
+if ! output=$(tail -c 4 test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Moin" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+echo "== Writing into the Hole correct Filesize check =="
+if ! old_size=$(stat -c '%s' test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if ! printf "TEST" | dd of=test.txt bs=1 seek=$((4096 + 100)) conv=notrunc status=none; then
+    echo "WRITE FAILED"
+    exit 1
+fi
+
+if ! new_size=$(stat -c '%s' test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$new_size" -eq "$old_size" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+echo "== Written data inside hole is correct =="
+
+if dd if=test.txt bs=1 skip=$((4096 + 100)) count=4 status=none |
+   cmp -s - <(printf "TEST"); then
+    echo "PASS"
+else
+    echo "FAIL"
+
+    echo "Expected:"
+    printf "TEST" | od -An -tx1
+
+    echo "Actual:"
+    dd if=test.txt bs=1 skip=$((4096 + 100)) count=4 status=none |
+        od -An -tx1
+
+    exit 1
+fi
+
+echo "== Original data is still correct =="
+
+if ! output=$(tail -c 4 test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Moin" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+echo "== Bytes around written data remain zero =="
+
+if ! output=$(dd if=test.txt bs=1 skip=4096 count=100 status=none |
+    tr -d '\0' |
+    wc -c); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "0" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
 
 echo ""
 echo "============================"
@@ -172,9 +295,7 @@ echo "== Test Extents Big File Size =="
 cd ..
 dd if=/dev/urandom of=bigfile bs=1M count=5
 cp bigfile mnt/
-if cmp ./bigfile ./mnt/bigfile; then
-    echo "PASS"
-else
+if ! cmp ./bigfile ./mnt/bigfile; then
     echo "5MB file not correct written/read"
     echo "FAIL"
     exit 1
@@ -191,6 +312,7 @@ if [ "$(dmesg | grep "count=" | awk -F'count=' '{sum += $2} END {print sum}')" -
     echo "PASS"
 else
     echo "Did not return correct block count"
+    echo "FAIL"
     exit 1
 fi
 
