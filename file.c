@@ -572,11 +572,143 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	return result;
 }
 
+ssize_t ouichefs_copy_block(struct super_block *sb, uint32_t source_block,
+			    uint32_t destination_block)
+{
+	struct buffer_head *source_bh;
+	struct buffer_head *destination_bh;
+	int ret = 0;
+
+	source_bh = sb_bread(sb, source_block);
+	if (!source_bh)
+		return -EIO;
+
+	destination_bh = sb_getblk(sb, destination_block);
+	if (!destination_bh) {
+		brelse(source_bh);
+		return -ENOMEM;
+	}
+	
+	lock_buffer(destination_bh);
+
+	memcpy(destination_bh->b_data, source_bh->b_data, sb->s_blocksize);
+
+	set_buffer_uptodate(destination_bh);
+	mark_buffer_dirty(destination_bh);
+	unlock_buffer(destination_bh);
+	sync_dirty_buffer(destination_bh);
+
+	brelse(destination_bh);
+	brelse(source_bh);
+	return ret;
+}
+
+ssize_t file_defrag(struct super_block *sb, struct inode *inode) {
+	struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
+	struct ouichefs_file_index_block *index;
+	struct buffer_head *bh_index;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+
+	bh_index = sb_bread(sb, inode_info->index_block);
+	if (!bh_index) {
+		printk("ouichefs: unable to acces index block\n");
+		return -EIO;
+	}
+	index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+	/* Count total blocks and extra extents needed because of holes */
+	uint32_t needed_blocks = 0;
+	uint32_t needed_extents = 0;
+
+	for (uint32_t i = 0; i < index->num_extents; i++) {
+		uint32_t start = index->extents[i].start;
+		uint32_t count = index->extents[i].count;
+		if (!start) {
+			needed_extents++;
+			continue;
+		}
+		needed_blocks += count;
+	}
+
+	/* Try to allocate contiguous amount of blocks */
+	uint32_t new_block_start;
+	uint32_t allocated_blocks = ouichefs_alloc_contiguous(sb, needed_blocks, &new_block_start);
+	if (!allocated_blocks) {
+		brelse(bh_index);
+		return -ENOSPC;
+	}
+	/* Move data to new place and create a new extent list */
+	struct ouichefs_extent new_extent_list[OUICHEFS_MAX_EXTENTS];
+	for (uint32_t i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
+		new_extent_list[i].start = 0;
+		new_extent_list[i].count = 0;
+	}
+
+	uint32_t new_extent_index = 0;
+	if (allocated_blocks < needed_blocks) {
+		/* Partial defrag */
+		/* We do not want more fragmentation -> happens if allocated_blocks < extent[any].count; */
+		return -ENOSPC;
+		// for (uint32_t i = 0; i < index->num_extents; i++){
+		//
+		// }
+	} else {
+		/* Full defrag */
+		// Logic may be broken. You need to keep track how much we already allocated or maybe not?
+		// Since allocated_blocks should be the same amount as needed_blocks
+		for (uint32_t i = 0; i < index->num_extents; i++) {
+			uint32_t old_start = index->extents[i].start;
+			uint32_t old_count = index->extents[i].count;
+
+			/* Hole we add extent with same count */
+			if (!old_start) {
+				new_block_start += new_extent_list[new_extent_index].count;
+				new_extent_index++;
+				new_extent_list[new_extent_index].count = old_count;
+			}
+			if (!new_extent_list[new_extent_index].start)
+				new_extent_list[new_extent_index].start = new_block_start;
+			for (uint32_t j = 0; j < old_count; j++) {
+				if (ouichefs_copy_block(sb, old_start + j, new_block_start + j))
+					goto restore_old;
+				new_extent_list[new_extent_index].count++;
+			}
+		}
+	}
+
+	/*
+	 * If copying succeded:
+	 * Free all the old blocks and set the new extent list.
+	 */
+	for (uint32_t i = 0; i < index->num_extents; i++) {
+		uint32_t old_start = index->extents[i].start;
+		uint32_t old_count = index->extents[i].count;
+
+		for (uint32_t j = 0; j < old_count; j++) {
+			put_block(sbi, old_start + j);
+		}
+	}
+	
+	memcpy(&index->num_extents, &needed_extents, sizeof(uint32_t));
+	memcpy(&index->extents, new_extent_list, sizeof(struct ouichefs_extent));
+
+	brelse(bh_index);
+	return allocated_blocks;
+
+restore_old:
+	/* Needs to free all allocated_blocks -> not done yet!!!
+	 * needs bookeeping on what we allocated to restore back to original
+	 */
+	brelse(bh_index);
+	return 0;
+}
+
 long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_addr)
 {
+	struct inode *inode = file_desc->f_inode;
+	struct super_block *sb = inode->i_sb;
+
 	if (cmd == OUICHEFS_IOC_GET_EXTENTS) {
-		struct inode *inode = file_desc->f_inode;
-		struct super_block *sb = inode->i_sb;
 		struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
 		struct ouichefs_file_index_block *index;
 		struct buffer_head *bh_index;
@@ -598,6 +730,8 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 			       extent.start + max(extent.count - 1, 0));
 		}
 		brelse(bh_index);
+	} else if (cmd == OUICHEFS_IOC_DEFRAG_FILE) {
+		return file_defrag(sb, inode);
 	} else {
 		printk("ouichefs: unknown ioctl\n");
 		return -ENOTTY;

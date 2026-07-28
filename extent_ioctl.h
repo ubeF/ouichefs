@@ -2,5 +2,6 @@
 #define _EXTENT_IOCTL_H
 
 #define OUICHEFS_IOC_GET_EXTENTS _IO('E', 1)
+#define OUICHEFS_IOC_DEFRAG_FILE _IO('E', 2)
 
 #endif /* _EXTENT_IOCTL_H */
