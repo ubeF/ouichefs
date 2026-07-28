@@ -66,39 +66,61 @@ fi
 
 if [ "$output" = "Salet" ]; then
     echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
+
+echo ""
+echo "==================="
+echo "  File with Holes"
+echo "==================="
+
+rm -f test.txt
+
+if ! echo -n "Moin" | dd of=test.txt bs=4096 seek=2 status=none; then
+    echo "WRITE FAILED"
+    exit 1
+fi
+
+echo "== Correct Filesize =="
+if ! size=$(stat -c '%s' test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$size" = "8196" ]; then
+    echo "PASS"
  else
     echo "FAIL"
     exit 1
  fi
 
-#echo ""
-#echo "==================="
-#echo "  File with Holes"
-#echo "==================="
-#
-#rm -f test.txt
-#echo -n "Moin" | dd of=test.txt bs=4096 seek=2 status=none
-#
-#echo "== Correct Filesize =="
-#if [ "$(stat -c '%s' test.txt)" = "8196" ]; then
-#    echo "PASS"
-#else
-#    echo "FAIL"
-#fi
-#
-#echo "== Empty blocks are zero =="
-#if [ "$(dd if=test.txt bs=8192 count=1 status=none | tr -d '\0' | wc -c)" = "0" ]; then
-#    echo "PASS"
-#else
-#    echo "FAIL"
-#fi
-#
-#echo "== Data is accessible =="
-#if [ "$(tail -c 4 test.txt)" = "Moin" ]; then
-#    echo "PASS"
-#else
-#    echo "FAIL"
-#fi
+echo "== Empty blocks are zero =="
+if ! output=$(dd if=test.txt bs=8192 count=1 status=none | tr -d '\0' | wc -c); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "0" ]; then
+    echo "PASS"
+ else
+    echo "FAIL"
+    exit 1
+ fi
+
+echo "== Data is accessible =="
+if ! output=$(tail -c 4 test.txt); then
+    echo "READ FAILED"
+    exit 1
+fi
+
+if [ "$output" = "Moin" ]; then
+    echo "PASS"
+else
+    echo "FAIL"
+    exit 1
+fi
 
 echo ""
 echo "============================"
@@ -202,9 +224,7 @@ echo "== Test Extents Big File Size =="
 cd ..
 dd if=/dev/urandom of=bigfile bs=1M count=5
 cp bigfile mnt/
-if cmp ./bigfile ./mnt/bigfile; then
-    echo "PASS"
-else
+if ! cmp ./bigfile ./mnt/bigfile; then
     echo "5MB file not correct written/read"
     echo "FAIL"
     exit 1
@@ -221,6 +241,7 @@ if [ "$(dmesg | grep "count=" | awk -F'count=' '{sum += $2} END {print sum}')" -
     echo "PASS"
 else
     echo "Did not return correct block count"
+    echo "FAIL"
     exit 1
 fi
 
