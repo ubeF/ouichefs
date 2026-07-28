@@ -355,9 +355,13 @@ ssize_t ouichefs_shift_extents_left(struct ouichefs_file_index_block *index, siz
 		return -EINVAL;
 	}
 
-	if (extent_idx + 1 < index->num_extents)
+	if (extent_idx + 1 < index->num_extents) {
 		memmove(&list[extent_idx], &list[extent_idx + 1],
 			(index->num_extents - extent_idx - 1) * sizeof(*list));
+	} else {
+		list[extent_idx].start = 0;
+		list[extent_idx].count = 0;
+	}
 
 	index->num_extents--;
 	return extent_idx;
@@ -377,10 +381,10 @@ ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct o
 
 	if (block_idx == 0) {
 		/*
-		 * If the new extent is contiguous with the previous extent,
-		 * merge them and keep only the trailing hole (if any).
-		 */
-		if (extent_idx > 0 && list[extent_idx - 1].start + list[extent_idx - 1].count == new.start) {
+			If the new extent is contiguous with the previous extent (and it is not a hole), 
+			merge them and keep only the trailing hole (if any).
+		*/
+		if (extent_idx > 0 && list[extent_idx - 1].start && list[extent_idx - 1].start + list[extent_idx - 1].count == new.start) {
 			list[extent_idx - 1].count += new.count;
 
 			if (tail_count > 0) {
@@ -458,14 +462,14 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	struct ouichefs_extent *extents = index->extents;
 
 	uint32_t start_block = *pos / sb->s_blocksize;
-	uint64_t end_pos = *pos + count;
+	uint64_t end_pos = *pos + count - 1;
 	uint32_t end_block = end_pos / sb->s_blocksize;
 
 	/* Creating a filling hole when we write past the end of file */
 	if (end_block >= inode->i_blocks - 1) {
 		if (index->num_extents > 0 && extents[index->num_extents - 1].start == 0) {
 			/* If the last extent is a hole, we can just extend it */
-			extents[index->num_extents - 1].count = end_block - (inode->i_blocks - 2);
+			extents[index->num_extents - 1].count += end_block - (inode->i_blocks - 2);
 		} else {
 			/* 
 				This could cause us to lose an extent under extreme fragmentation.
@@ -495,16 +499,14 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	uint32_t block_offset = start_block - block_idx;
 
 	/* Allocate blocks */
-	for (size_t extent_space = 0; start_block <= end_block; start_block += extent_space) {
+	for (size_t blocks_to_write = 0; start_block <= end_block; start_block += blocks_to_write) {
 		struct ouichefs_extent *extent = &extents[extent_idx];
-		extent_space = extent->count - block_offset;
-		block_offset = 0; // Reset block_offset after the first iteration
+		blocks_to_write = min(extent->count - block_offset, end_block - start_block + 1);
 		/* If there is no hole, skip */
 		if (extent->start) {
 			extent_idx++;
 		} else {
 			/* If there is a hole, allocate blocks to fill it */
-			size_t blocks_to_write = min(extent_space, end_block - start_block + 1);
 			struct ouichefs_extent new_extent;
 			new_extent.count = ouichefs_alloc(inode, blocks_to_write, &new_extent.start);
 			if (!new_extent.count)
@@ -513,6 +515,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 			if (extent_idx < 0)
 				break;
 		}
+		block_offset = 0; // Reset block_offset after the first iteration
 	}
 
 	mark_buffer_dirty(bh_index);
@@ -680,7 +683,7 @@ int ouichefs_truncate(struct inode *inode)
 
 	mark_buffer_dirty(bh);
 	brelse(bh);
-	inode->i_blocks = required_blocks + 1; // +1 for index block
+	inode->i_blocks = required_blocks - remaining_blocks + 1; // +1 for index block
 	mark_inode_dirty(inode);
 
 	return 0;
