@@ -676,12 +676,6 @@ int ouichefs_truncate(struct inode *inode)
 		}
 	}
 
-	if (remaining_blocks > 0) {
-		pr_err("ouichefs: truncate attempted to grow file\n");
-		ret = -EINVAL;
-		goto out_brelse;
-	}
-
 	index->num_extents = new_num_extents;
 
 	mark_buffer_dirty(bh);
