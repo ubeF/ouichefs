@@ -460,6 +460,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 {
 	struct inode *inode = file->f_inode;
 	struct super_block *sb = inode->i_sb;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
 	inode_lock(inode);
@@ -475,6 +476,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 	struct ouichefs_extent *extents = index->extents;
+	ssize_t old_num_extents = le32_to_cpu(index->num_extents);
 
 	uint32_t start_block = *pos / sb->s_blocksize;
 	uint64_t end_pos = *pos + count - 1;
@@ -589,6 +591,8 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		mark_inode_dirty(inode);
 		result = cursor - buf;
 	}
+
+	sbi->nr_extents += le32_to_cpu(index->num_extents) - old_num_extents;
 
 	inode_unlock(inode);
 	if (get_fragmentation(sb) >= fragmentation_threshold)
@@ -725,6 +729,7 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode)
 		}
 	}
 
+	sbi->nr_extents += new_extent_index - le32_to_cpu(index->num_extents);
 	index->num_extents = cpu_to_le32(new_extent_index);
 	memcpy(&index->extents, new_extent_list, sizeof(index->extents));
 
@@ -877,6 +882,7 @@ int ouichefs_truncate(struct inode *inode)
 		}
 	}
 
+	sbi->nr_extents += new_num_extents - old_num_extents;
 	index->num_extents = cpu_to_le32(new_num_extents);
 
 	mark_buffer_dirty(bh);
