@@ -112,12 +112,15 @@ struct ouichefs_dir_block {
 };
 
 extern uint32_t reservation_size;
+extern uint32_t fragmentation_threshold;
 extern struct kobject *ouichefs_kobj;
 
 /* superblock functions */
 int ouichefs_fill_super(struct super_block *sb, void *data, int silent);
 
 void ouichefs_garbage_collector(struct super_block *sb);
+void ouichefs_fs_defrag(struct super_block *sb);
+ssize_t get_fragmentation(struct super_block *sb);
 
 /* inode functions */
 int ouichefs_init_inode_cache(void);

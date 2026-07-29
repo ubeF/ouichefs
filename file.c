@@ -82,6 +82,21 @@ static uint32_t ouichefs_alloc(struct inode *inode, uint32_t requested, uint32_t
 	ci->i_reserved_start += allocated_count;
 	ci->i_reserved_count -= allocated_count;
 
+	/* Zero out newly allocated blocks */
+	for (uint32_t i = 0; i < allocated_count; i++) {
+		struct buffer_head *bh = sb_getblk(sb, allocated_start + i);
+		if (!bh)
+			continue;
+
+		lock_buffer(bh);
+		memset(bh->b_data, 0, sb->s_blocksize);
+		set_buffer_uptodate(bh);
+		mark_buffer_dirty(bh);
+		unlock_buffer(bh);
+		sync_dirty_buffer(bh);
+		brelse(bh);
+	}
+
 	*block = allocated_start;
 
 	mark_inode_dirty(inode);
@@ -566,14 +581,183 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	}
 
 	inode_unlock(inode);
+	if (get_fragmentation(sb) >= fragmentation_threshold)
+		ouichefs_fs_defrag(sb);
 	return result;
+}
+
+ssize_t ouichefs_copy_block(struct super_block *sb, uint32_t source_block,
+			    uint32_t destination_block)
+{
+	struct buffer_head *source_bh;
+	struct buffer_head *destination_bh;
+	int ret = 0;
+
+	source_bh = sb_bread(sb, source_block);
+	if (!source_bh)
+		return -EIO;
+
+	destination_bh = sb_getblk(sb, destination_block);
+	if (!destination_bh) {
+		brelse(source_bh);
+		return -ENOMEM;
+	}
+
+	lock_buffer(destination_bh);
+
+	memcpy(destination_bh->b_data, source_bh->b_data, sb->s_blocksize);
+
+	set_buffer_uptodate(destination_bh);
+	mark_buffer_dirty(destination_bh);
+	unlock_buffer(destination_bh);
+	sync_dirty_buffer(destination_bh);
+
+	brelse(destination_bh);
+	brelse(source_bh);
+	return ret;
+}
+
+ssize_t file_defrag(struct super_block *sb, struct inode *inode)
+{
+	struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
+	struct ouichefs_file_index_block *index;
+	struct buffer_head *bh_index;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+
+	bh_index = sb_bread(sb, inode_info->index_block);
+	if (!bh_index) {
+		printk("ouichefs: unable to acces index block\n");
+		return -EIO;
+	}
+	index = (struct ouichefs_file_index_block *)bh_index->b_data;
+
+	/* Count total blocks and extra extents needed because of holes */
+	uint32_t needed_blocks = 0;
+
+	for (uint32_t i = 0; i < index->num_extents; i++) {
+		uint32_t start = index->extents[i].start;
+		uint32_t count = index->extents[i].count;
+		if (!start) {
+			continue;
+		}
+		needed_blocks += count;
+	}
+
+	if (needed_blocks == 0) {
+		brelse(bh_index);
+		return 0;
+	}
+
+	/* Try to allocate contiguous amount of blocks */
+	uint32_t new_block_start;
+	uint32_t allocated_blocks = ouichefs_alloc_contiguous(sb, needed_blocks, &new_block_start);
+	if (!allocated_blocks) {
+		brelse(bh_index);
+		return -ENOSPC;
+	}
+	/* Create a new extent list */
+	struct ouichefs_extent *new_extent_list = kzalloc(sizeof(index->extents), GFP_KERNEL);
+	uint32_t new_extent_index = 0;
+	uint32_t old_extent_index = 0;
+
+	/* Copy as much data as possible */
+	for (uint32_t blocks_copied = 0; old_extent_index < index->num_extents && blocks_copied < allocated_blocks; old_extent_index++) {
+		uint32_t old_start = index->extents[old_extent_index].start;
+		uint32_t old_count = index->extents[old_extent_index].count;
+
+		/* Hole we add extent with same count */
+		if (!old_start) {
+			if (new_extent_list[new_extent_index].start)
+				++new_extent_index;
+			new_extent_list[new_extent_index].count += old_count;
+		} else {
+			if (!new_extent_list[new_extent_index].start) {
+				if (new_extent_list[new_extent_index].count)
+					++new_extent_index;
+				new_extent_list[new_extent_index].start = new_block_start + blocks_copied;
+			}
+			for (uint32_t j = 0; j < old_count; j++) {
+				if (blocks_copied + 1 > allocated_blocks) {
+					/* We have run out of allocated blocks, we need to create a new extent for the remaining blocks */
+					new_extent_index++;
+					new_extent_list[new_extent_index].start = old_start + j;
+					new_extent_list[new_extent_index].count = old_count - j;
+					break;
+				}
+
+				if (ouichefs_copy_block(sb, old_start + j, new_block_start + blocks_copied))
+					goto restore_old;
+				blocks_copied++;
+				new_extent_list[new_extent_index].count++;
+			}
+		}
+	}
+	new_extent_index++;
+
+	while (old_extent_index < index->num_extents) {
+		new_extent_list[new_extent_index++] = index->extents[old_extent_index++];
+	}
+
+	/*
+	 * If copying succeded:
+	 * Free all the copied blocks and set the new extent list.
+	 */
+	uint32_t freed_blocks = 0;
+	for (uint32_t i = 0; i < index->num_extents && freed_blocks < allocated_blocks; i++) {
+		uint32_t old_start = index->extents[i].start;
+		uint32_t old_count = index->extents[i].count;
+
+		for (uint32_t j = 0; j < old_count && freed_blocks < allocated_blocks; j++) {
+			if (!old_start)
+				continue;
+			put_block(sbi, old_start + j);
+			freed_blocks++;
+		}
+	}
+
+	index->num_extents = new_extent_index;
+	memcpy(&index->extents, new_extent_list, sizeof(index->extents));
+
+	mark_buffer_dirty(bh_index);
+	sync_dirty_buffer(bh_index);
+	kfree(new_extent_list);
+	brelse(bh_index);
+	return allocated_blocks;
+
+restore_old:
+	for (uint32_t i = 0; i < allocated_blocks; i++) {
+		put_block(sbi, new_block_start + i);
+	}
+	brelse(bh_index);
+	kfree(new_extent_list);
+	return 0;
+}
+
+void ouichefs_fs_defrag(struct super_block *sb)
+{
+	struct inode *inode;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
+
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			continue;
+		if (S_ISREG(inode->i_mode)) {
+			file_defrag(sb, inode);
+		}
+		iput(inode);
+	}
 }
 
 long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_addr)
 {
+	struct inode *inode = file_desc->f_inode;
+	struct super_block *sb = inode->i_sb;
+
 	if (cmd == OUICHEFS_IOC_GET_EXTENTS) {
-		struct inode *inode = file_desc->f_inode;
-		struct super_block *sb = inode->i_sb;
 		struct ouichefs_inode_info *inode_info = OUICHEFS_INODE(inode);
 		struct ouichefs_file_index_block *index;
 		struct buffer_head *bh_index;
@@ -595,6 +779,8 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 			       extent.start + max(extent.count - 1, 0));
 		}
 		brelse(bh_index);
+	} else if (cmd == OUICHEFS_IOC_DEFRAG_FILE) {
+		return file_defrag(sb, inode);
 	} else {
 		printk("ouichefs: unknown ioctl\n");
 		return -ENOTTY;

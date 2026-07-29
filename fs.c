@@ -14,6 +14,7 @@
 #include "ouichefs.h"
 
 uint32_t reservation_size = 8;
+uint32_t fragmentation_threshold = 400;
 struct kobject *ouichefs_kobj;
 module_param(reservation_size, uint, 0644);
 
