@@ -372,59 +372,14 @@ static ssize_t reserved_blocks_show(struct super_block *sb, char *buf)
 
 static ssize_t files_show(struct super_block *sb, char *buf)
 {
-	struct inode *inode;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-	uint32_t num_files = 0;
-
-	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
-		if (test_bit(ino, sbi->ifree_bitmap))
-			continue;
-
-		inode = ouichefs_iget(sb, ino);
-		if (IS_ERR(inode))
-			return PTR_ERR(inode);
-		if (S_ISREG(inode->i_mode)) {
-			num_files++;
-		}
-		iput(inode);
-	}
-	return sysfs_emit(buf, "%u\n", num_files);
+	return sysfs_emit(buf, "%u\n", sbi->nr_files);
 }
 
 static ssize_t total_extents_show(struct super_block *sb, char *buf)
 {
-	struct inode *inode;
-	struct ouichefs_inode_info *ci;
-	struct buffer_head *bh_index;
-	struct ouichefs_file_index_block *index;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-	uint64_t total_extents = 0;
-
-	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
-		if (test_bit(ino, sbi->ifree_bitmap))
-			continue;
-
-		inode = ouichefs_iget(sb, ino);
-		if (IS_ERR(inode))
-			return PTR_ERR(inode);
-		if (!S_ISREG(inode->i_mode)) {
-			iput(inode);
-			continue;
-		}
-		ci = OUICHEFS_INODE(inode);
-		bh_index = sb_bread(sb, ci->index_block);
-		if (!bh_index) {
-			iput(inode);
-			return -EIO;
-		}
-
-		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += le32_to_cpu(index->num_extents);
-
-		brelse(bh_index);
-		iput(inode);
-	}
-	return sysfs_emit(buf, "%llu\n", total_extents);
+	return sysfs_emit(buf, "%u\n", sbi->nr_extents);
 }
 
 static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
