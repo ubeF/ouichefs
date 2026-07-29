@@ -528,6 +528,10 @@ echo "===================================="
 echo " Defragmentation Test"
 echo "===================================="
 
+# Set fragmentation threshold over 512 * 100 to disable it for this test
+echo 60000 > /sys/ouichefs/vda/fragmentation_threshold
+cat /sys/ouichefs/vda/fragmentation_threshold
+
 cp ../ouichefs/extent_ioctl.h .
 
 printf "%s" '

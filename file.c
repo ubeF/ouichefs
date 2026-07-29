@@ -81,6 +81,21 @@ static uint32_t ouichefs_alloc(struct inode *inode, uint32_t requested, uint32_t
 	ci->i_reserved_start += allocated_count;
 	ci->i_reserved_count -= allocated_count;
 
+	/* Zero out newly allocated blocks */
+	for (uint32_t i = 0; i < allocated_count; i++) {
+		struct buffer_head *bh = sb_getblk(sb, allocated_start + i);
+		if (!bh)
+			continue;
+
+		lock_buffer(bh);
+		memset(bh->b_data, 0, sb->s_blocksize);
+		set_buffer_uptodate(bh);
+		mark_buffer_dirty(bh);
+		unlock_buffer(bh);
+		sync_dirty_buffer(bh);
+		brelse(bh);
+	}
+
 	*block = allocated_start;
 
 	mark_inode_dirty(inode);
@@ -569,6 +584,8 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	} 
 
 	inode_unlock(inode);
+	if (get_fragmentation(sb) >= fragmentation_threshold)
+		ouichefs_fs_defrag(sb);
 	return result;
 }
 
@@ -669,7 +686,8 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode) {
 					new_extent_list[new_extent_index].count = old_count - j;
 					break;
 				}
-				if (ouichefs_copy_block(sb, old_start + j, new_extent_list[new_extent_index].start + j))
+				
+				if (ouichefs_copy_block(sb, old_start + j, new_extent_list[new_extent_index].start + blocks_copied))
 					goto restore_old;
 				blocks_copied++;
 				new_extent_list[new_extent_index].count++;
@@ -715,6 +733,24 @@ restore_old:
 	brelse(bh_index);
 	kfree(new_extent_list);
 	return 0;
+}
+
+void ouichefs_fs_defrag(struct super_block *sb) {
+	struct inode *inode;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+
+	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
+		if (test_bit(ino, sbi->ifree_bitmap))
+			continue;
+
+		inode = ouichefs_iget(sb, ino);
+		if (IS_ERR(inode))
+			continue;
+		if (S_ISREG(inode->i_mode)) {
+			file_defrag(sb, inode);
+		}
+		iput(inode);
+	}
 }
 
 long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_addr)

@@ -494,8 +494,7 @@ static ssize_t max_file_size_show(struct super_block *sb, char *buf)
 	return sysfs_emit(buf, "%u\n", max_inode_size);
 }
 
-static ssize_t fragmentation_show(struct super_block *sb, char *buf)
-{
+ssize_t get_fragmentation(struct super_block *sb) {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct inode *inode;
 	struct ouichefs_inode_info *ci;
@@ -533,6 +532,12 @@ static ssize_t fragmentation_show(struct super_block *sb, char *buf)
 	uint32_t fragmentation =
 		num_files == 0 ? 0 : (total_extents * 100) / num_files;
 
+	return fragmentation;
+}
+
+static ssize_t fragmentation_show(struct super_block *sb, char *buf)
+{
+	uint32_t fragmentation = get_fragmentation(sb);
 	return sysfs_emit(buf, "%u\n", fragmentation);
 }
 
@@ -563,6 +568,22 @@ static ssize_t reservation_size_store(struct super_block *sb, const char *buf, s
         return -EINVAL;
 
     reservation_size = val;
+    return count;
+}
+
+static ssize_t fragmentation_threshold_show(struct super_block *sb, char *buf)
+{
+	return sysfs_emit(buf, "%u\n", fragmentation_threshold);
+}
+
+static ssize_t fragmentation_threshold_store(struct super_block *sb, const char *buf, size_t count)
+{
+	uint32_t val;
+    int rc = sscanf(buf, "%u", &val);
+    if (rc != 1 || rc < 0)
+        return -EINVAL;
+
+    fragmentation_threshold = val;
     return count;
 }
 
@@ -605,6 +626,9 @@ static struct ouichefs_sysfs_entry gc_runs_attribute =
 static struct ouichefs_sysfs_entry total_blocks_attribute =
 	__ATTR(total_blocks, 0400, total_blocks_show, NULL);
 
+static struct ouichefs_sysfs_entry fragmentation_threshold_attribute =
+	__ATTR(fragmentation_threshold, 0644, fragmentation_threshold_show, fragmentation_threshold_store);
+
 static struct attribute *ouichefs_sys_attrs[] = {
 	&free_blocks_attribute.attr,
 	&committed_blocks_attribute.attr,
@@ -617,6 +641,7 @@ static struct attribute *ouichefs_sys_attrs[] = {
 	&reservation_size_attribute.attr,
 	&gc_runs_attribute.attr,
 	&total_blocks_attribute.attr,
+	&fragmentation_threshold_attribute.attr,
 	NULL, /* need to NULL terminate the list of attributes */
 };
 ATTRIBUTE_GROUPS(ouichefs_sys);
