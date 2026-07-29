@@ -676,6 +676,7 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode) {
 			}
 		}
 	}
+	new_extent_index++;
 
 	while(old_extent_index < index->num_extents) {
 		new_extent_list[new_extent_index++] = index->extents[old_extent_index++];
