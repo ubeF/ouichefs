@@ -337,10 +337,10 @@ static ssize_t commited_blocks_show(struct super_block *sb, char *buf)
 		}
 
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		for (uint32_t i = 0; i < index->num_extents; i++) {
-			if (!index->extents[i].start)
+		for (uint32_t i = 0; i < le32_to_cpu(index->num_extents); i++) {
+			if (!le32_to_cpu(index->extents[i].start))
 				continue;
-			committed_blocks += index->extents[i].count;
+			committed_blocks += le32_to_cpu(index->extents[i].count);
 		}
 
 		brelse(bh_index);
@@ -415,7 +415,7 @@ static ssize_t total_extents_show(struct super_block *sb, char *buf)
 		}
 
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += index->num_extents;
+		total_extents += le32_to_cpu(index->num_extents);
 
 		brelse(bh_index);
 		iput(inode);
@@ -452,11 +452,11 @@ static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
 		}
 
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += index->num_extents;
-		for (uint32_t i = 0; i < index->num_extents; i++) {
-			if (!index->extents[i].start)
+		total_extents += le32_to_cpu(index->num_extents);
+		for (uint32_t i = 0; i < le32_to_cpu(index->num_extents); i++) {
+			if (!le32_to_cpu(index->extents[i].start))
 				continue;
-			total_blocks += index->extents[i].count;
+			total_blocks += le32_to_cpu(index->extents[i].count);
 		}
 
 		brelse(bh_index);
@@ -526,7 +526,7 @@ ssize_t get_fragmentation(struct super_block *sb)
 		}
 
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += index->num_extents;
+		total_extents += le32_to_cpu(index->num_extents);
 		iput(inode);
 	}
 
