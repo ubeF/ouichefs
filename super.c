@@ -130,6 +130,8 @@ static void ouichefs_evict_inode(struct inode *inode)
 
 		if (S_ISREG(inode->i_mode)) {
 			file_index = (struct ouichefs_file_index_block *)bh->b_data;
+			sbi->nr_files--;
+			sbi->nr_extents -= le32_to_cpu(file_index->num_extents);
 
 			for (i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
 				if (!le32_to_cpu(file_index->extents[i].start))
@@ -183,6 +185,8 @@ static int sync_sb_info(struct super_block *sb, int wait)
 	disk_sb->nr_bfree_blocks = cpu_to_le32(sbi->nr_bfree_blocks);
 	disk_sb->nr_free_inodes = cpu_to_le32(sbi->nr_free_inodes);
 	disk_sb->nr_free_blocks = cpu_to_le32(sbi->nr_free_blocks);
+	disk_sb->nr_files = cpu_to_le32(sbi->nr_files);
+	disk_sb->nr_extents = cpu_to_le32(sbi->nr_extents);
 
 	mark_buffer_dirty(bh);
 	if (wait)
@@ -337,10 +341,10 @@ static ssize_t commited_blocks_show(struct super_block *sb, char *buf)
 		}
 
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		for (uint32_t i = 0; i < index->num_extents; i++) {
-			if (!index->extents[i].start)
+		for (uint32_t i = 0; i < le32_to_cpu(index->num_extents); i++) {
+			if (!le32_to_cpu(index->extents[i].start))
 				continue;
-			committed_blocks += index->extents[i].count;
+			committed_blocks += le32_to_cpu(index->extents[i].count);
 		}
 
 		brelse(bh_index);
@@ -368,59 +372,14 @@ static ssize_t reserved_blocks_show(struct super_block *sb, char *buf)
 
 static ssize_t files_show(struct super_block *sb, char *buf)
 {
-	struct inode *inode;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-	uint32_t num_files = 0;
-
-	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
-		if (test_bit(ino, sbi->ifree_bitmap))
-			continue;
-
-		inode = ouichefs_iget(sb, ino);
-		if (IS_ERR(inode))
-			return PTR_ERR(inode);
-		if (S_ISREG(inode->i_mode)) {
-			num_files++;
-		}
-		iput(inode);
-	}
-	return sysfs_emit(buf, "%u\n", num_files);
+	return sysfs_emit(buf, "%u\n", sbi->nr_files);
 }
 
 static ssize_t total_extents_show(struct super_block *sb, char *buf)
 {
-	struct inode *inode;
-	struct ouichefs_inode_info *ci;
-	struct buffer_head *bh_index;
-	struct ouichefs_file_index_block *index;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-	uint64_t total_extents = 0;
-
-	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
-		if (test_bit(ino, sbi->ifree_bitmap))
-			continue;
-
-		inode = ouichefs_iget(sb, ino);
-		if (IS_ERR(inode))
-			return PTR_ERR(inode);
-		if (!S_ISREG(inode->i_mode)) {
-			iput(inode);
-			continue;
-		}
-		ci = OUICHEFS_INODE(inode);
-		bh_index = sb_bread(sb, ci->index_block);
-		if (!bh_index) {
-			iput(inode);
-			return -EIO;
-		}
-
-		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += index->num_extents;
-
-		brelse(bh_index);
-		iput(inode);
-	}
-	return sysfs_emit(buf, "%llu\n", total_extents);
+	return sysfs_emit(buf, "%u\n", sbi->nr_extents);
 }
 
 static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
@@ -452,11 +411,11 @@ static ssize_t avg_extent_size_show(struct super_block *sb, char *buf)
 		}
 
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += index->num_extents;
-		for (uint32_t i = 0; i < index->num_extents; i++) {
-			if (!index->extents[i].start)
+		total_extents += le32_to_cpu(index->num_extents);
+		for (uint32_t i = 0; i < le32_to_cpu(index->num_extents); i++) {
+			if (!le32_to_cpu(index->extents[i].start))
 				continue;
-			total_blocks += index->extents[i].count;
+			total_blocks += le32_to_cpu(index->extents[i].count);
 		}
 
 		brelse(bh_index);
@@ -497,41 +456,8 @@ static ssize_t max_file_size_show(struct super_block *sb, char *buf)
 ssize_t get_fragmentation(struct super_block *sb)
 {
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
-	struct inode *inode;
-	struct ouichefs_inode_info *ci;
-	struct buffer_head *bh_index;
-	struct ouichefs_file_index_block *index;
 
-	uint32_t num_files = 0;
-	uint32_t total_extents = 0;
-
-	for (uint32_t ino = 1; ino < sbi->nr_inodes; ino++) {
-		if (test_bit(ino, sbi->ifree_bitmap))
-			continue;
-		inode = ouichefs_iget(sb, ino);
-		if (IS_ERR(inode))
-			return PTR_ERR(inode);
-
-		if (!S_ISREG(inode->i_mode)) {
-			iput(inode);
-			continue;
-		}
-
-		num_files++;
-		ci = OUICHEFS_INODE(inode);
-		bh_index = sb_bread(sb, ci->index_block);
-		if (!bh_index) {
-			iput(inode);
-			return -EIO;
-		}
-
-		index = (struct ouichefs_file_index_block *)bh_index->b_data;
-		total_extents += index->num_extents;
-		iput(inode);
-	}
-
-	uint32_t fragmentation =
-		num_files == 0 ? 0 : (total_extents * 100) / num_files;
+	uint32_t fragmentation = sbi->nr_files == 0 ? 0 : (sbi->nr_extents * 100) / sbi->nr_files;
 
 	return fragmentation;
 }
@@ -737,6 +663,8 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->nr_bfree_blocks = le32_to_cpu(csb->nr_bfree_blocks);
 	sbi->nr_free_inodes = le32_to_cpu(csb->nr_free_inodes);
 	sbi->nr_free_blocks = le32_to_cpu(csb->nr_free_blocks);
+	sbi->nr_files = le32_to_cpu(csb->nr_files);
+	sbi->nr_extents = le32_to_cpu(csb->nr_extents);
 
 	o_sys = kzalloc(sizeof(*o_sys), GFP_KERNEL);
 	if (!o_sys) {

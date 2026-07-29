@@ -132,7 +132,7 @@ static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 	 * Check if iblock is already allocated. If not and create is true,
 	 * allocate it. Else, get the physical block number.
 	 */
-	if (index->extents[iblock].start == 0) {
+	if (!index->extents[iblock].start) {
 		if (!create) {
 			ret = 0;
 			goto brelse_index;
@@ -144,14 +144,14 @@ static int ouichefs_file_get_block(struct inode *inode, sector_t iblock,
 			goto brelse_index;
 		}
 
-		index->extents[iblock].start = bno;
-		index->extents[iblock].count = 1;
+		index->extents[iblock].start = cpu_to_le32(bno);
+		index->extents[iblock].count = cpu_to_le32(1);
 		++inode->i_blocks;
 
 		mark_inode_dirty(inode);
 		mark_buffer_dirty(bh_index);
 	} else {
-		bno = index->extents[iblock].start;
+		bno = le32_to_cpu(index->extents[iblock].start);
 	}
 
 	/* Map the physical block to the given buffer_head */
@@ -242,8 +242,8 @@ static uint32_t ouichefs_extent_get_block(struct ouichefs_extent *extents, uint3
 	if (!extents)
 		return 0;
 	for (uint32_t i = 0; i < OUICHEFS_MAX_EXTENTS; i++) {
-		uint32_t start = extents[i].start;
-		uint32_t count = extents[i].count;
+		uint32_t start = le32_to_cpu(extents[i].start);
+		uint32_t count = le32_to_cpu(extents[i].count);
 
 		if (count == 0)
 			return 0;
@@ -345,37 +345,39 @@ void ouichefs_garbage_collector(struct super_block *sb)
 
 ssize_t ouichefs_shift_extents_right(struct ouichefs_file_index_block *index, size_t extent_idx)
 {
+	uint32_t num_extents = le32_to_cpu(index->num_extents);
 	struct ouichefs_extent *list = index->extents;
-	if (index->num_extents >= OUICHEFS_MAX_EXTENTS) {
+	if (num_extents >= OUICHEFS_MAX_EXTENTS) {
 		pr_err("file reached maximum number of extents\n");
 		return -ENOSPC;
 	}
 
-	if (extent_idx < index->num_extents)
+	if (extent_idx < num_extents)
 		memmove(&list[extent_idx + 1], &list[extent_idx],
-			(index->num_extents - extent_idx) * sizeof(*list));
+			(num_extents - extent_idx) * sizeof(*list));
 
-	index->num_extents++;
+	index->num_extents = cpu_to_le32(num_extents + 1);
 	return extent_idx;
 }
 
 ssize_t ouichefs_shift_extents_left(struct ouichefs_file_index_block *index, size_t extent_idx)
 {
+	uint32_t num_extents = le32_to_cpu(index->num_extents);
 	struct ouichefs_extent *list = index->extents;
-	if (extent_idx >= index->num_extents) {
+	if (extent_idx >= num_extents) {
 		pr_err("invalid extent index for left shift\n");
 		return -EINVAL;
 	}
 
-	if (extent_idx + 1 < index->num_extents) {
+	if (extent_idx + 1 < num_extents) {
 		memmove(&list[extent_idx], &list[extent_idx + 1],
-			(index->num_extents - extent_idx - 1) * sizeof(*list));
+			(num_extents - extent_idx - 1) * sizeof(*list));
 	} else {
 		list[extent_idx].start = 0;
 		list[extent_idx].count = 0;
 	}
 
-	index->num_extents--;
+	index->num_extents = cpu_to_le32(num_extents - 1);
 	return extent_idx;
 }
 
@@ -387,8 +389,8 @@ ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct o
 	 *   [prefix hole] [new extent] [trailing hole]
 	 * depending on where the new extent starts and how many blocks it uses.
 	 */
-	uint32_t old_count = list[extent_idx].count;
-	uint32_t consumed = block_idx + new.count;
+	uint32_t old_count = le32_to_cpu(list[extent_idx].count);
+	uint32_t consumed = block_idx + le32_to_cpu(new.count);
 	uint32_t tail_count = old_count > consumed ? old_count - consumed : 0;
 
 	if (block_idx == 0) {
@@ -396,13 +398,14 @@ ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct o
 			If the new extent is contiguous with the previous extent (and it is not a hole),
 			merge them and keep only the trailing hole (if any).
 		*/
-		if (extent_idx > 0 && list[extent_idx - 1].start && list[extent_idx - 1].start + list[extent_idx - 1].count == new.start) {
-			list[extent_idx - 1].count += new.count;
+		if (extent_idx > 0 && le32_to_cpu(list[extent_idx - 1].start) &&
+	    le32_to_cpu(list[extent_idx - 1].start) + le32_to_cpu(list[extent_idx - 1].count) == le32_to_cpu(new.start)) {
+			list[extent_idx - 1].count = cpu_to_le32(le32_to_cpu(list[extent_idx - 1].count) + le32_to_cpu(new.count));
 
 			if (tail_count > 0) {
 				/* Keep the remaining tail as a new hole extent. */
 				list[extent_idx].start = 0;
-				list[extent_idx].count = tail_count;
+				list[extent_idx].count = cpu_to_le32(tail_count);
 				return extent_idx + 1;
 			} else {
 				/* No tail hole remains: remove the old hole extent. */
@@ -419,7 +422,7 @@ ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct o
 			if (ret < 0)
 				return ret;
 			list[extent_idx + 1].start = 0;
-			list[extent_idx + 1].count = tail_count;
+			list[extent_idx + 1].count = cpu_to_le32(tail_count);
 			return extent_idx + 2;
 		} else {
 			/* No tail hole remains: done. */
@@ -431,7 +434,7 @@ ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct o
 	 * The new extent starts inside the existing hole, so keep the prefix
 	 * of the hole at the current slot and insert the new extent after it.
 	 */
-	list[extent_idx].count = block_idx;
+	list[extent_idx].count = cpu_to_le32(block_idx);
 
 	int ret = ouichefs_shift_extents_right(index, extent_idx + 1);
 	if (ret < 0)
@@ -445,7 +448,7 @@ ssize_t ouichefs_insert_extent(struct ouichefs_file_index_block *index, struct o
 		if (ret < 0)
 			return ret;
 		list[extent_idx + 2].start = 0;
-		list[extent_idx + 2].count = tail_count;
+		list[extent_idx + 2].count = cpu_to_le32(tail_count);
 		return extent_idx + 3;
 	} else {
 		/* No tail hole remains: done. */
@@ -457,6 +460,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 {
 	struct inode *inode = file->f_inode;
 	struct super_block *sb = inode->i_sb;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 
 	inode_lock(inode);
@@ -472,6 +476,7 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 	struct ouichefs_file_index_block *index = (struct ouichefs_file_index_block *)bh_index->b_data;
 	struct ouichefs_extent *extents = index->extents;
+	ssize_t old_num_extents = le32_to_cpu(index->num_extents);
 
 	uint32_t start_block = *pos / sb->s_blocksize;
 	uint64_t end_pos = *pos + count - 1;
@@ -479,24 +484,28 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 	/* Creating a filling hole when we write past the end of file */
 	if (end_block >= inode->i_blocks - 1) {
-		if (index->num_extents > 0 && extents[index->num_extents - 1].start == 0) {
+		uint32_t num_extents = le32_to_cpu(index->num_extents);
+		if (num_extents > 0 && !extents[num_extents - 1].start) {
 			/* If the last extent is a hole, we can just extend it */
-			extents[index->num_extents - 1].count += end_block - (inode->i_blocks - 2);
+			uint32_t new_count = le32_to_cpu(extents[num_extents - 1].count) +
+				end_block - (inode->i_blocks - 2);
+			extents[num_extents - 1].count = cpu_to_le32(new_count);
 		} else {
 			/*
 				This could cause us to lose an extent under extreme fragmentation.
 				If the new blocks would be contiguous with the last extent, we wrongfully fail here.
 				But this is unlikely under extreme fragmentation. So we will ignore this for now.
 			*/
-			if (index->num_extents >= OUICHEFS_MAX_EXTENTS) {
+			if (num_extents >= OUICHEFS_MAX_EXTENTS) {
 				pr_err("file reached maximum number of extents\n");
 				brelse(bh_index);
 				inode_unlock(inode);
 				return -ENOSPC;
 			}
-			struct ouichefs_extent *new_extent = &extents[index->num_extents++];
+			struct ouichefs_extent *new_extent = &extents[num_extents++];
 			new_extent->start = 0;
-			new_extent->count = end_block - (inode->i_blocks - 2);
+			new_extent->count = cpu_to_le32(end_block - (inode->i_blocks - 2));
+			index->num_extents = cpu_to_le32(num_extents);
 		}
 		inode->i_blocks = end_block + 2; // Holes are also counted in i_blocks, dont forget the index block
 		mark_inode_dirty(inode);
@@ -504,8 +513,9 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 
 	size_t extent_idx = 0;
 	size_t block_idx = 0;
-	while (block_idx + extents[extent_idx].count < start_block) {
-		block_idx += extents[extent_idx].count;
+	while (extent_idx < le32_to_cpu(index->num_extents) &&
+	       block_idx + le32_to_cpu(extents[extent_idx].count) < start_block) {
+		block_idx += le32_to_cpu(extents[extent_idx].count);
 		extent_idx++;
 	}
 	uint32_t block_offset = start_block - block_idx;
@@ -513,9 +523,11 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 	/* Allocate blocks */
 	for (size_t blocks_to_write = 0; start_block <= end_block; start_block += blocks_to_write) {
 		struct ouichefs_extent *extent = &extents[extent_idx];
-		blocks_to_write = min(extent->count - block_offset, end_block - start_block + 1);
+		uint32_t extent_count = le32_to_cpu(extent->count);
+		uint32_t extent_start = le32_to_cpu(extent->start);
+		blocks_to_write = min(extent_count - block_offset, end_block - start_block + 1);
 		/* If there is no hole, skip */
-		if (extent->start) {
+		if (extent_start) {
 			extent_idx++;
 		} else {
 			/* If there is a hole, allocate blocks to fill it */
@@ -580,6 +592,8 @@ ssize_t ouichefs_write(struct file *file, const char __user *buf, size_t count, 
 		result = cursor - buf;
 	}
 
+	sbi->nr_extents += le32_to_cpu(index->num_extents) - old_num_extents;
+
 	inode_unlock(inode);
 	if (get_fragmentation(sb) >= fragmentation_threshold)
 		ouichefs_fs_defrag(sb);
@@ -634,9 +648,9 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode)
 	/* Count total blocks and extra extents needed because of holes */
 	uint32_t needed_blocks = 0;
 
-	for (uint32_t i = 0; i < index->num_extents; i++) {
-		uint32_t start = index->extents[i].start;
-		uint32_t count = index->extents[i].count;
+	for (uint32_t i = 0; i < le32_to_cpu(index->num_extents); i++) {
+		uint32_t start = le32_to_cpu(index->extents[i].start);
+		uint32_t count = le32_to_cpu(index->extents[i].count);
 		if (!start) {
 			continue;
 		}
@@ -661,40 +675,40 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode)
 	uint32_t old_extent_index = 0;
 
 	/* Copy as much data as possible */
-	for (uint32_t blocks_copied = 0; old_extent_index < index->num_extents && blocks_copied < allocated_blocks; old_extent_index++) {
-		uint32_t old_start = index->extents[old_extent_index].start;
-		uint32_t old_count = index->extents[old_extent_index].count;
+	for (uint32_t blocks_copied = 0; old_extent_index < le32_to_cpu(index->num_extents) && blocks_copied < allocated_blocks; old_extent_index++) {
+		uint32_t old_start = le32_to_cpu(index->extents[old_extent_index].start);
+		uint32_t old_count = le32_to_cpu(index->extents[old_extent_index].count);
 
 		/* Hole we add extent with same count */
 		if (!old_start) {
-			if (new_extent_list[new_extent_index].start)
+			if (le32_to_cpu(new_extent_list[new_extent_index].start))
 				++new_extent_index;
-			new_extent_list[new_extent_index].count += old_count;
+			new_extent_list[new_extent_index].count = cpu_to_le32(le32_to_cpu(new_extent_list[new_extent_index].count) + old_count);
 		} else {
-			if (!new_extent_list[new_extent_index].start) {
-				if (new_extent_list[new_extent_index].count)
+			if (!le32_to_cpu(new_extent_list[new_extent_index].start)) {
+				if (le32_to_cpu(new_extent_list[new_extent_index].count))
 					++new_extent_index;
-				new_extent_list[new_extent_index].start = new_block_start + blocks_copied;
+				new_extent_list[new_extent_index].start = cpu_to_le32(new_block_start + blocks_copied);
 			}
 			for (uint32_t j = 0; j < old_count; j++) {
 				if (blocks_copied + 1 > allocated_blocks) {
 					/* We have run out of allocated blocks, we need to create a new extent for the remaining blocks */
 					new_extent_index++;
-					new_extent_list[new_extent_index].start = old_start + j;
-					new_extent_list[new_extent_index].count = old_count - j;
+					new_extent_list[new_extent_index].start = cpu_to_le32(old_start + j);
+					new_extent_list[new_extent_index].count = cpu_to_le32(old_count - j);
 					break;
 				}
 
 				if (ouichefs_copy_block(sb, old_start + j, new_block_start + blocks_copied))
 					goto restore_old;
 				blocks_copied++;
-				new_extent_list[new_extent_index].count++;
+				new_extent_list[new_extent_index].count = cpu_to_le32(le32_to_cpu(new_extent_list[new_extent_index].count) + 1);
 			}
 		}
 	}
 	new_extent_index++;
 
-	while (old_extent_index < index->num_extents) {
+	while (old_extent_index < le32_to_cpu(index->num_extents)) {
 		new_extent_list[new_extent_index++] = index->extents[old_extent_index++];
 	}
 
@@ -703,9 +717,9 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode)
 	 * Free all the copied blocks and set the new extent list.
 	 */
 	uint32_t freed_blocks = 0;
-	for (uint32_t i = 0; i < index->num_extents && freed_blocks < allocated_blocks; i++) {
-		uint32_t old_start = index->extents[i].start;
-		uint32_t old_count = index->extents[i].count;
+	for (uint32_t i = 0; i < le32_to_cpu(index->num_extents) && freed_blocks < allocated_blocks; i++) {
+		uint32_t old_start = le32_to_cpu(index->extents[i].start);
+		uint32_t old_count = le32_to_cpu(index->extents[i].count);
 
 		for (uint32_t j = 0; j < old_count && freed_blocks < allocated_blocks; j++) {
 			if (!old_start)
@@ -715,7 +729,8 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode)
 		}
 	}
 
-	index->num_extents = new_extent_index;
+	sbi->nr_extents += new_extent_index - le32_to_cpu(index->num_extents);
+	index->num_extents = cpu_to_le32(new_extent_index);
 	memcpy(&index->extents, new_extent_list, sizeof(index->extents));
 
 	mark_buffer_dirty(bh_index);
@@ -769,14 +784,16 @@ long extents_ioctl(struct file *file_desc, unsigned int cmd, unsigned long usr_a
 		}
 		index = (struct ouichefs_file_index_block *)bh_index->b_data;
 
-		printk("ouichefs: extents for inode %lu: %d extent(s)\n", inode->i_ino, index->num_extents);
+		printk("ouichefs: extents for inode %lu: %d extent(s)\n", inode->i_ino, le32_to_cpu(index->num_extents));
 		for (size_t i = 0; i < OUICHEFS_MAX_EXTENTS; ++i) {
 			struct ouichefs_extent extent = index->extents[i];
-			if (extent.count == 0)
+			uint32_t extent_start = le32_to_cpu(extent.start);
+			uint32_t extent_count = le32_to_cpu(extent.count);
+			if (extent_count == 0)
 				break;
 			printk("  [%lu] start=%d count=%d (blocks %d-%d)\n", i,
-			       extent.start, extent.count, extent.start,
-			       extent.start + max(extent.count - 1, 0));
+			       extent_start, extent_count, extent_start,
+			       extent_start + max(extent_count - 1, 0));
 		}
 		brelse(bh_index);
 	} else if (cmd == OUICHEFS_IOC_DEFRAG_FILE) {
@@ -830,7 +847,7 @@ int ouichefs_truncate(struct inode *inode)
 	uint32_t required_blocks = (inode->i_size + sb->s_blocksize - 1) >> sb->s_blocksize_bits;
 
 	uint32_t remaining_blocks = required_blocks;
-	uint32_t old_num_extents = index->num_extents;
+	uint32_t old_num_extents = le32_to_cpu(index->num_extents);
 	uint32_t new_num_extents = 0;
 
 	/*
@@ -842,18 +859,21 @@ int ouichefs_truncate(struct inode *inode)
 		struct ouichefs_extent *extent = &index->extents[i];
 		uint32_t keep;
 
-		/* Kept blocks of extent are either all of them or number of rest of needed blocks */
-		keep = min(remaining_blocks, extent->count);
+		uint32_t extent_count = le32_to_cpu(extent->count);
+		uint32_t extent_start = le32_to_cpu(extent->start);
 
-		if (extent->start) {
-			for (uint32_t j = keep; j < extent->count; j++) {
-				put_block(sbi, extent->start + j);
+		/* Kept blocks of extent are either all of them or number of rest of needed blocks */
+		keep = min(remaining_blocks, extent_count);
+
+		if (extent_start) {
+			for (uint32_t j = keep; j < extent_count; j++) {
+				put_block(sbi, extent_start + j);
 			}
 		}
 
 		/* Update remaining_blocks or free extent if keep is zero */
 		if (keep > 0) {
-			extent->count = keep;
+			extent->count = cpu_to_le32(keep);
 			new_num_extents = i + 1;
 			remaining_blocks -= keep;
 		} else {
@@ -862,7 +882,8 @@ int ouichefs_truncate(struct inode *inode)
 		}
 	}
 
-	index->num_extents = new_num_extents;
+	sbi->nr_extents += new_num_extents - old_num_extents;
+	index->num_extents = cpu_to_le32(new_num_extents);
 
 	mark_buffer_dirty(bh);
 	brelse(bh);

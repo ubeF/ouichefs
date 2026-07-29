@@ -226,6 +226,7 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 			   struct dentry *dentry, umode_t mode, bool excl)
 {
 	struct super_block *sb;
+	struct ouichefs_sb_info *sbi;
 	struct inode *inode;
 	struct ouichefs_inode_info *ci_dir;
 	struct ouichefs_dir_block *dblock;
@@ -240,6 +241,7 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 	/* Read parent directory index */
 	ci_dir = OUICHEFS_INODE(dir);
 	sb = dir->i_sb;
+	sbi = OUICHEFS_SB(sb);
 	bh = sb_bread(sb, ci_dir->index_block);
 	if (!bh)
 		return -EIO;
@@ -290,6 +292,7 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 	/* setup dentry */
 	d_instantiate(dentry, inode);
 
+	sbi->nr_files++;
 	return 0;
 
 iput:
