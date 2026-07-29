@@ -687,7 +687,7 @@ ssize_t file_defrag(struct super_block *sb, struct inode *inode) {
 					break;
 				}
 				
-				if (ouichefs_copy_block(sb, old_start + j, new_extent_list[new_extent_index].start + blocks_copied))
+				if (ouichefs_copy_block(sb, old_start + j, new_block_start + blocks_copied))
 					goto restore_old;
 				blocks_copied++;
 				new_extent_list[new_extent_index].count++;

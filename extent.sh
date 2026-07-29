@@ -579,8 +579,8 @@ exec 3>test1.txt
 exec 4>test2.txt
 
 for i in 1 2 3 4 5; do
-    printf '%4096s' '' >&3 || exit 1
-    printf '%4096s' '' >&4 || exit 1
+    dd if=/dev/urandom bs=4096 count=1 status=none >&3 || exit 1
+    dd if=/dev/urandom bs=4096 count=1 status=none >&4 || exit 1
 done
 
 exec 3>&-
@@ -609,6 +609,8 @@ if [ "$extents" -le 1 ]; then
     exit 1
 fi
 
+cp test1.txt /tmp/test1_expected.bin
+
 # Run defrag helper on test1.txt and ensure it reports 5 blocks allocated
 if ! output=$(/tmp/defrag_file "test1.txt"); then
     echo "defrag helper failed"
@@ -619,6 +621,12 @@ fi
 if ! printf '%s' "$output" | grep -q "defrag succeeded, 5 blocks allocated"; then
     echo "defrag did not return 5"
     echo "Output: $output"
+    echo "FAIL"
+    exit 1
+fi
+
+if ! cmp -s /tmp/test1_expected.bin test1.txt; then
+    echo "Content mismatch after defrag"
     echo "FAIL"
     exit 1
 fi
@@ -678,8 +686,8 @@ rm -f *
 exec 3>part1.txt
 exec 4>part2.txt
 for i in $(seq 1 50); do
-    printf '%4096s' '' >&3 || exit 1
-    printf '%4096s' '' >&4 || exit 1
+    dd if=/dev/urandom bs=4096 count=1 status=none >&3 || exit 1
+    dd if=/dev/urandom bs=4096 count=1 status=none >&4 || exit 1
 done
 exec 3>&-
 exec 4>&-
@@ -699,6 +707,8 @@ sync
 needed_blocks=50
 expected_allocated=8
 
+cp part1.txt /tmp/part1_expected.bin
+
 # Run defrag (should be partial) and verify it moved some blocks and preserved total blocks
 if ! output=$(/tmp/defrag_file "part1.txt"); then
     echo "defrag helper failed"
@@ -717,6 +727,12 @@ fi
 if [ "$allocated" -ne "$expected_allocated" ]; then
     echo "defrag allocated $allocated blocks, expected $expected_allocated"
     echo "Output: $output"
+    echo "FAIL"
+    exit 1
+fi
+
+if ! cmp -s /tmp/part1_expected.bin part1.txt; then
+    echo "Content mismatch after partial defrag"
     echo "FAIL"
     exit 1
 fi
