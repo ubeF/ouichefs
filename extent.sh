@@ -5,9 +5,14 @@ if ! lsmod | grep -q '^ouichefs'; then
 fi
 
 mkdir -p mnt
+mkdir -p mnt1
 
 if ! mountpoint -q mnt; then
     mount /dev/vda mnt
+fi
+
+if ! mountpoint -q mnt1; then
+    mount /dev/vdb mnt1
 fi
 
 cd mnt/
@@ -107,7 +112,7 @@ if [ "$output" = "0" ]; then
  else
     echo "FAIL"
     exit 1
- fi
+fi
 
 echo "== Data is accessible =="
 if ! output=$(tail -c 4 test.txt); then
@@ -426,6 +431,7 @@ if printf '%4096s' '' > trigger; then
     echo PASS
 else
     echo FAIL
+    exit 1
 fi
 
 exec 3>&-
@@ -522,6 +528,99 @@ else
     echo "FAIL: free blocks + commited blocks + reserved blocks not equal total blocks"
     exit 1
 fi
+
+echo ""
+echo "===================================="
+echo " Test Sysfs on other partition"
+echo "===================================="
+
+sys_path="/sys/ouichefs/vdb"
+
+if ! total_blocks=$(cat "$sys_path/total_blocks"); then
+    echo "FAIL: error get total blocks"
+    exit 1
+else
+    echo "total blocks: $total_blocks"
+fi
+
+if ! free_blocks=$(cat "$sys_path/free_blocks"); then
+    echo "FAIL: error get free blocks"
+    exit 1
+else
+    echo "free blocks: $free_blocks"
+fi
+
+if ! committed_blocks=$(cat "$sys_path/committed_blocks"); then
+    echo "FAIL: error get committed blocks"
+    exit 1
+else
+    echo "committed blocks: $committed_blocks"
+fi
+
+if ! reserved_blocks=$(cat "$sys_path/reserved_blocks"); then
+    echo "FAIL: error get reserved blocks"
+    exit 1
+else
+    echo "reserved blocks: $reserved_blocks"
+fi
+
+if ! files=$(cat "$sys_path/files"); then
+    echo "FAIL: error get number files"
+    exit 1
+else
+    echo "number files: $files"
+fi
+
+if ! total_extents=$(cat "$sys_path/total_extents"); then
+    echo "FAIL: error get total extents"
+    exit 1
+else
+    echo "total extents: $total_extents"
+fi
+
+if ! avg_extent_size=$(cat "$sys_path/avg_extent_size"); then
+    echo "FAIL: error get avg extent size"
+    exit 1
+else
+    echo "avg extent size: $avg_extent_size"
+fi
+
+if ! max_file_size=$(cat "$sys_path/max_file_size"); then
+    echo "FAIL: error get max file size"
+    exit 1
+else
+    echo "max file size: $max_file_size"
+fi
+
+if ! fragmentation=$(cat "$sys_path/fragmentation"); then
+    echo "FAIL: error get fragmentation"
+    exit 1
+else
+    echo "fragmentation: $fragmentation"
+fi
+
+if ! reservation_size=$(cat "$sys_path/reservation_size"); then
+    echo "FAIL: error get reservation size"
+    exit 1
+else
+    echo "reservation: $reservation_size"
+fi
+
+if ! gc_runs=$(cat "$sys_path/gc_runs"); then
+    echo "FAIL: error get gc runs"
+    exit 1
+else
+    echo "gc runs: $gc_runs"
+fi
+
+if (( free_blocks + committed_blocks + reserved_blocks == total_blocks )); then
+    echo "PASS"
+else
+    echo "FAIL: free blocks + commited blocks + reserved blocks not equal total blocks"
+    exit 1
+fi
+
+sys_path="/sys/ouichefs/vda"
 
 echo ""
 echo "===================================="
@@ -654,7 +753,7 @@ echo "== Defrag preserves holes test =="
 rm -f *
 printf '%s' "A" | dd of=hole.txt bs=4096 count=1 seek=0 conv=notrunc status=none
 printf '%s' "B" | dd of=hole.txt bs=4096 count=1 seek=3 conv=notrunc status=none
-sync
+sync:
 
 # Run defrag
 if ! output=$(/tmp/defrag_file "hole.txt"); then
@@ -791,3 +890,48 @@ else
         exit 1
     fi
 fi
+
+echo ""
+echo "===================================="
+echo " Persistance Test"
+echo "===================================="
+
+sys_path="/sys/ouichefs/vda"
+before=/tmp/sysfs_before
+after=/tmp/sysfs_after
+
+stats="total_blocks free_blocks committed_blocks reserved_blocks files total_extents avg_extent_size max_file_size fragmentation"
+
+rm -f *
+dd if=/dev/urandom of=file1 bs=4096 count=3 status=none || exit 1
+dd if=/dev/urandom of=file2 bs=4096 count=5 status=none || exit 1
+sync
+
+rm -f "$before" "$after"
+
+for stat in $stats; do
+    echo "$stat=$(cat "$sys_path/$stat")" >> "$before" || exit 1
+done
+
+cd ..
+umount mnt || exit 1
+mount /dev/vda mnt || exit 1
+cd mnt || exit 1
+
+if [ ! -f file1 ] || [ ! -f file2 ]; then
+    echo "FAIL: files missing after remount"
+    exit 1
+fi
+
+for stat in $stats; do
+    echo "$stat=$(cat "$sys_path/$stat")" >> "$after" || exit 1
+done
+
+if diff -u "$before" "$after"; then
+    echo "PASS: sysfs values match after remount"
+else
+    echo "FAIL: sysfs values changed after remount"
+    exit 1
+fi
+
+rm -f "$before" "$after"
