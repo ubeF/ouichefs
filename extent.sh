@@ -530,7 +530,6 @@ echo "===================================="
 
 # Set fragmentation threshold over 512 * 100 to disable it for this test
 echo 60000 > /sys/ouichefs/vda/fragmentation_threshold
-cat /sys/ouichefs/vda/fragmentation_threshold
 
 cp ../ouichefs/extent_ioctl.h .
 
@@ -736,3 +735,43 @@ if [ "$after_blocks" -ne "$needed_blocks" ]; then
 fi
 
 echo "PASS"
+
+echo ""
+echo "== Automatic defragmentation =="
+
+rm -f *
+
+echo 400 > "$sys_path/fragmentation_threshold"
+
+exec 3>test1.txt
+exec 4>test2.txt
+for i in $(seq 1 13); do
+    printf '%4096s' '' >&3 || exit 1
+    printf '%4096s' '' >&4 || exit 1
+done
+exec 3>&-
+exec 4>&-
+sync
+
+if ! /tmp/get_extents_ioctl "test1.txt"; then
+    echo "get_extents ioctl failed"
+    exit 1
+fi
+
+if ! /tmp/get_extents_ioctl "test2.txt"; then
+    echo "get_extents ioctl failed"
+    exit 1
+fi
+
+if ! fragmentation=$(cat "$sys_path/fragmentation"); then
+    echo "FAIL: error get fragmentation"
+    exit 1
+else
+    echo "Fragmentation: $fragmentation"
+    if [ "$fragmentation" -eq 100 ]; then
+        echo "PASS"
+    else
+        echo "FAIL"
+        exit 1
+    fi
+fi
