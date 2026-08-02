@@ -357,7 +357,7 @@ if ! dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none; then
     exit 1
 fi
 
-if ! dd if=/dev/zero of=test1.txt bs=32768 count=1 status=none; then
+if ! dd if=/dev/zero of=test2.txt bs=32768 count=1 status=none; then
     exit 1
 fi
 
